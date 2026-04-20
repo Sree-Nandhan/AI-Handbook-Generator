@@ -1,11 +1,12 @@
 import asyncio
 import re
 import os
-import google.generativeai as genai
+from cerebras.cloud.sdk import Cerebras
 from dataclasses import dataclass
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from config import (
-    GEMINI_API_KEY, MIN_WORDS_PER_PARAGRAPH, MAX_WORDS_PER_PARAGRAPH,
+    CEREBRAS_API_KEY, CEREBRAS_MODEL_NAME,
+    MIN_WORDS_PER_PARAGRAPH, MAX_WORDS_PER_PARAGRAPH,
     TARGET_HANDBOOK_WORDS, OUTPUT_DIR,
 )
 from rag_engine import RAGEngine
@@ -31,8 +32,9 @@ PLAN_PROMPT = """You are a professional handbook architect. Given the following 
 break it down into a detailed writing plan for a comprehensive handbook.
 
 Each paragraph should be between {min_words} and {max_words} words.
-The total handbook should be approximately {target_words} words.
-This means you need roughly {num_paragraphs} paragraphs.
+The total handbook should be approximately {target_words} words (not more, not less).
+Create exactly {num_paragraphs} paragraphs to reach this target.
+Aim for an average of 500 words per paragraph. Do NOT create more than {num_paragraphs} paragraphs.
 
 Format each entry EXACTLY as:
 Paragraph [N] - Main Point: [Detailed description of what this paragraph covers] - Word Count: [target word count]
@@ -74,24 +76,22 @@ IMPORTANT:
 class HandbookGenerator:
     def __init__(self, rag_engine: RAGEngine):
         self.rag_engine = rag_engine
-        genai.configure(api_key=GEMINI_API_KEY)
-        self.model = genai.GenerativeModel("gemini-2.0-flash")
+        self.client = Cerebras(api_key=CEREBRAS_API_KEY)
 
     @retry(
-        wait=wait_exponential(min=2, max=60),
+        wait=wait_exponential(min=30, max=120),
         stop=stop_after_attempt(5),
         retry=retry_if_exception_type(Exception),
     )
     async def _generate(self, prompt: str, max_tokens: int = 4096) -> str:
         response = await asyncio.to_thread(
-            self.model.generate_content,
-            prompt,
-            generation_config=genai.GenerationConfig(
-                max_output_tokens=max_tokens,
-                temperature=0.7,
-            ),
+            self.client.chat.completions.create,
+            model=CEREBRAS_MODEL_NAME,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=max_tokens,
+            temperature=0.7,
         )
-        return response.text
+        return response.choices[0].message.content
 
     async def generate_plan(self, instruction: str, rag_context: str = "") -> list[ParagraphPlan]:
         num_paragraphs = TARGET_HANDBOOK_WORDS // ((MIN_WORDS_PER_PARAGRAPH + MAX_WORDS_PER_PARAGRAPH) // 2)
@@ -116,12 +116,36 @@ class HandbookGenerator:
         return plan
 
     def _parse_plan_response(self, raw_plan: str) -> list[ParagraphPlan]:
+        # Try original format: Paragraph N - Main Point: ... - Word Count: N
         pattern = r"Paragraph\s+(\d+)\s*[-\u2013\u2014]\s*Main Point:\s*(.+?)\s*[-\u2013\u2014]\s*Word Count:\s*(\d+)"
         matches = re.findall(pattern, raw_plan)
-        return [
-            ParagraphPlan(number=int(n), main_point=point.strip(), word_count=int(wc))
-            for n, point, wc in matches
-        ]
+        if matches:
+            return [
+                ParagraphPlan(number=int(n), main_point=point.strip(), word_count=int(wc))
+                for n, point, wc in matches
+            ]
+
+        # Fallback: multi-line format where main point is on one line, description + word count on next
+        # e.g. "Paragraph 1 - Introduction to LongWriter:\nA description... - Word Count: 500"
+        pattern2 = r"Paragraph\s+(\d+)\s*[-\u2013\u2014]\s*(.+?):\s*\n.*?[-\u2013\u2014]\s*Word Count:\s*(\d+)"
+        matches = re.findall(pattern2, raw_plan)
+        if matches:
+            return [
+                ParagraphPlan(number=int(n), main_point=point.strip(), word_count=int(wc))
+                for n, point, wc in matches
+            ]
+
+        # Fallback 2: single-line without "Main Point:" prefix
+        # e.g. "Paragraph 1 - Introduction to LongWriter - Word Count: 500"
+        pattern3 = r"Paragraph\s+(\d+)\s*[-\u2013\u2014]\s*(.+?)\s*[-\u2013\u2014]\s*Word Count:\s*(\d+)"
+        matches = re.findall(pattern3, raw_plan)
+        if matches:
+            return [
+                ParagraphPlan(number=int(n), main_point=point.strip(), word_count=int(wc))
+                for n, point, wc in matches
+            ]
+
+        return []
 
     async def write_paragraph(
         self,
@@ -210,7 +234,7 @@ class HandbookGenerator:
             written_text += "\n\n" + paragraph
 
             # Rate limit pause for Gemini free tier
-            await asyncio.sleep(2)
+            await asyncio.sleep(5)
 
         # Phase 3: Compile
         if progress_callback:
@@ -250,9 +274,69 @@ class HandbookGenerator:
             f"*Total word count: approximately {word_count} words*"
         )
 
-    def save_handbook(self, handbook_md: str, filename: str = "handbook.md") -> str:
+    def save_handbook(self, handbook_md: str, filename: str = "handbook") -> str:
         os.makedirs(OUTPUT_DIR, exist_ok=True)
-        output_path = os.path.join(OUTPUT_DIR, filename)
-        with open(output_path, "w", encoding="utf-8") as f:
+
+        # Save Markdown
+        md_path = os.path.join(OUTPUT_DIR, f"{filename}.md")
+        with open(md_path, "w", encoding="utf-8") as f:
             f.write(handbook_md)
-        return output_path
+
+        # Save PDF
+        pdf_path = os.path.join(OUTPUT_DIR, f"{filename}.pdf")
+        self._markdown_to_pdf(handbook_md, pdf_path)
+
+        return pdf_path
+
+    @staticmethod
+    def _sanitize_text(text: str) -> str:
+        """Replace unicode chars that fpdf can't handle with ASCII equivalents."""
+        replacements = {
+            "\u2014": "--", "\u2013": "-", "\u2018": "'", "\u2019": "'",
+            "\u201c": '"', "\u201d": '"', "\u2026": "...", "\u2022": "*",
+            "\u00a0": " ", "\u200b": "", "\u2032": "'", "\u2033": '"',
+            "\u2192": "->", "\u2190": "<-", "\u2265": ">=", "\u2264": "<=",
+        }
+        for k, v in replacements.items():
+            text = text.replace(k, v)
+        return text.encode("latin-1", errors="replace").decode("latin-1")
+
+    @staticmethod
+    def _markdown_to_pdf(md_text: str, pdf_path: str) -> None:
+        from fpdf import FPDF
+
+        sanitize = HandbookGenerator._sanitize_text
+        pdf = FPDF()
+        pdf.set_auto_page_break(auto=True, margin=20)
+        pdf.add_page()
+
+        for line in md_text.split("\n"):
+            stripped = line.strip()
+
+            if stripped.startswith("# "):
+                pdf.set_font("Helvetica", "B", 20)
+                pdf.cell(0, 12, sanitize(stripped[2:]), new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(4)
+            elif stripped.startswith("## "):
+                pdf.set_font("Helvetica", "B", 16)
+                pdf.cell(0, 10, sanitize(stripped[3:]), new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(3)
+            elif stripped.startswith("### "):
+                pdf.set_font("Helvetica", "B", 13)
+                pdf.cell(0, 9, sanitize(stripped[4:]), new_x="LMARGIN", new_y="NEXT")
+                pdf.ln(2)
+            elif stripped == "---":
+                pdf.ln(4)
+                pdf.set_draw_color(200, 200, 200)
+                pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+                pdf.ln(4)
+            elif stripped.startswith("*") and stripped.endswith("*") and len(stripped) > 2:
+                pdf.set_font("Helvetica", "I", 10)
+                pdf.multi_cell(0, 6, sanitize(stripped.strip("*")))
+                pdf.ln(2)
+            elif stripped:
+                pdf.set_font("Helvetica", "", 11)
+                pdf.multi_cell(0, 6, sanitize(stripped))
+                pdf.ln(2)
+
+        pdf.output(pdf_path)

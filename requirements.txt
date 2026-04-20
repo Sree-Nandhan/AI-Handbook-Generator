@@ -7,3 +7,6 @@ python-dotenv
 numpy
 tenacity
 asyncpg
+cerebras-cloud-sdk
+sentence-transformers
+fpdf2

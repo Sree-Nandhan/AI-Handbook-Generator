@@ -7,3 +7,5 @@ outputs/
 rag_storage/
 .DS_Store
 CLAUDE.md
+*.pdf
+test_*.py

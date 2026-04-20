@@ -32,8 +32,21 @@ def clean_extracted_text(raw_text: str) -> str:
     lines = text.split("\n")
     cleaned_lines = [line.strip() for line in lines]
     text = "\n".join(cleaned_lines)
-    text = text.strip()
-    return text
+
+    # Strip references/bibliography section (usually at the end)
+    ref_patterns = [
+        r"\n\s*References\s*\n",
+        r"\n\s*REFERENCES\s*\n",
+        r"\n\s*Bibliography\s*\n",
+        r"\n\s*BIBLIOGRAPHY\s*\n",
+    ]
+    for pat in ref_patterns:
+        match = re.search(pat, text)
+        if match:
+            text = text[:match.start()]
+            break
+
+    return text.strip()
 
 
 def extract_text_from_multiple_pdfs(pdf_paths: list[str]) -> dict[str, str]:
