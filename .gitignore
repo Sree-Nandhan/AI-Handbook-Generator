@@ -1,0 +1,9 @@
+.env
+venv/
+__pycache__/
+*.pyc
+uploads/
+outputs/
+rag_storage/
+.DS_Store
+CLAUDE.md

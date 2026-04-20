@@ -1,0 +1,9 @@
+gradio>=4.0
+lightrag-hku
+google-generativeai
+pdfplumber
+supabase
+python-dotenv
+numpy
+tenacity
+asyncpg
