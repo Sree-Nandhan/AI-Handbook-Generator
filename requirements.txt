@@ -1,12 +1,10 @@
 gradio>=4.0
-lightrag-hku
-google-generativeai
+lightrag-hku[offline-storage]
+openai
 pdfplumber
-supabase
 python-dotenv
 numpy
 tenacity
 asyncpg
-cerebras-cloud-sdk
 sentence-transformers
 fpdf2

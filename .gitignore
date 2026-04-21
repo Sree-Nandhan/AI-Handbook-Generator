@@ -1,11 +1,31 @@
+# Environment & secrets
 .env
+
+# Python
 venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+
+# Application data
 uploads/
 outputs/
 rag_storage/
+
+# OS files
 .DS_Store
-CLAUDE.md
-*.pdf
-test_*.py
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Assignment doc (confidential)
+AI-Engineering-Assignment.pdf
+
+# Misc
+*.log
