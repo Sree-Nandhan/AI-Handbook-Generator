@@ -66,15 +66,31 @@ CSS = """
     font-size: 0.78rem;
 }
 
-#send-btn, #upload-btn, #cancel-btn, #generate-btn {
+#download-btn {
+    min-height: 48px !important;
+    font-weight: 600 !important;
+    font-size: 1rem !important;
+    border-radius: 12px !important;
+    margin-top: 8px !important;
+}
+
+#send-btn, #upload-btn, #cancel-btn {
     min-height: 42px !important;
     font-weight: 600 !important;
 }
 
-/* Ensure progress bar is always visible above other elements */
-.progress-bar, .wrap, .progress-text {
+/* Progress bar — clear space, no overlap */
+.progress-bar, .wrap {
     z-index: 1000 !important;
     position: relative !important;
+    margin-top: 16px !important;
+    clear: both !important;
+}
+.progress-text {
+    font-family: 'Inter', system-ui, sans-serif !important;
+    font-size: 0.9rem !important;
+    color: #94a3b8 !important;
+    margin-bottom: 8px !important;
 }
 
 /* Progress bar styling */
@@ -110,8 +126,17 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
 
             # ── Phase 1: Upload (visible by default) ──
             with gr.Column(visible=True) as upload_section:
+                gr.HTML(
+                    '<div style="padding:0 0 12px;">'
+                    '<h2 style="font-size:1.3rem;font-weight:700;margin:0;'
+                    'background:linear-gradient(135deg,#4f46e5,#7c3aed);'
+                    '-webkit-background-clip:text;-webkit-text-fill-color:transparent;'
+                    'background-clip:text;">Upload Documents</h2>'
+                    '</div>'
+                )
                 file_upload = gr.File(
-                    label="Upload PDF Documents",
+                    label=None,
+                    show_label=False,
                     file_types=[".pdf"],
                     file_count="multiple",
                     type="filepath",
@@ -143,11 +168,16 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                         show_label=False,
                         scale=5,
                         lines=1,
-                        submit_btn=True,
+                        submit_btn=False,
                     )
                     send_btn = gr.Button("Send", variant="primary", scale=1, elem_id="send-btn")
 
-                download = gr.File(label="Download Handbook", visible=False)
+                download = gr.DownloadButton(
+                    label="Download Handbook",
+                    visible=False,
+                    variant="primary",
+                    elem_id="download-btn",
+                )
 
             gr.HTML(
                 '<div id="footer">'
@@ -210,18 +240,31 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
             async for h, dl in handle_chat(message, history, rag_engine, handbook_gen):
                 yield h, dl
 
+        stored_msg = gr.State("")
+
+        def save_and_clear(message):
+            return message, ""
+
         send_btn.click(
+            fn=save_and_clear,
+            inputs=[msg_input],
+            outputs=[stored_msg, msg_input],
+        ).then(
             fn=on_chat,
-            inputs=[msg_input, chatbot],
+            inputs=[stored_msg, chatbot],
             outputs=[chatbot, download],
             show_progress="minimal",
-        ).then(fn=lambda: "", outputs=[msg_input])
+        )
 
         msg_input.submit(
+            fn=save_and_clear,
+            inputs=[msg_input],
+            outputs=[stored_msg, msg_input],
+        ).then(
             fn=on_chat,
-            inputs=[msg_input, chatbot],
+            inputs=[stored_msg, chatbot],
             outputs=[chatbot, download],
             show_progress="minimal",
-        ).then(fn=lambda: "", outputs=[msg_input])
+        )
 
     return app

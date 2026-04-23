@@ -35,6 +35,7 @@ def main():
         server_port=APP_PORT,
         theme=ui.THEME,
         css=ui.CSS,
+        js="() => { document.querySelector('body').classList.remove('dark'); }",
     )
 
 

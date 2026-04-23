@@ -51,7 +51,7 @@ CHUNK_OVERLAP = int(os.getenv("LIGHTRAG_CHUNK_OVERLAP", "100"))
 # ---------------------------------------------------------------------------
 # Embedding
 # ---------------------------------------------------------------------------
-EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-m3")
+EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "all-MiniLM-L6-v2")
 EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "384"))
 
 # ---------------------------------------------------------------------------

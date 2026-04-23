@@ -13,8 +13,12 @@ from app.handbook_generator import HandbookGenerator
 logger = logging.getLogger("handbook.handlers")
 
 HANDBOOK_KEYWORDS = [
-    "handbook", "generate", "create a handbook",
-    "write a handbook", "20,000", "20000",
+    "handbook",
+    "create a handbook",
+    "write a handbook",
+    "generate a handbook",
+    "generate handbook",
+    "make a handbook",
 ]
 
 
@@ -33,7 +37,6 @@ async def handle_upload(files: list, rag_engine: RAGEngine, progress=gr.Progress
     for idx, f in enumerate(files):
         fname = os.path.basename(f)
 
-        # Step 1: Extract text
         progress((idx * 3) / (total * 3), desc=f"Extracting text from {fname}...")
         try:
             path = save_uploaded_file(f)
@@ -46,7 +49,6 @@ async def handle_upload(files: list, rag_engine: RAGEngine, progress=gr.Progress
             results.append(f"**{fname}** — extraction error: {e}")
             continue
 
-        # Step 2: Index into knowledge graph
         progress((idx * 3 + 1) / (total * 3), desc=f"Indexing {fname} into knowledge graph...")
         try:
             await rag_engine.insert(text)
@@ -115,7 +117,7 @@ async def handle_chat(
 
 
 # ---------------------------------------------------------------------------
-# Handbook generation pipeline
+# Handbook generation — parallel batch pipeline
 # ---------------------------------------------------------------------------
 
 async def _generate_handbook(
@@ -124,59 +126,45 @@ async def _generate_handbook(
     rag_engine: RAGEngine,
     handbook_gen: HandbookGenerator,
 ):
-    """Run AgentWrite/LongWriter pipeline with live progress."""
+    """Run parallel AgentWrite/LongWriter pipeline with live progress."""
     history.append({"role": "assistant", "content": "**Planning** handbook structure..."})
     yield history, gr.update()
 
+    # Progress state shared with callback
+    status = {"stage": "planning", "total": 0, "done": 0}
+
+    def on_progress(stage, total, done):
+        status["stage"] = stage
+        status["total"] = total
+        status["done"] = done
+
     try:
-        # Phase 1: Plan
-        logger.info(f"Handbook started: {topic[:80]}")
-        broad_ctx = await rag_engine.get_context(topic)
-        plan = await handbook_gen.create_plan(topic, broad_ctx[:2000])
+        # Run generation with progress callback
+        gen_task = asyncio.create_task(
+            handbook_gen.generate_parallel(topic, rag_engine, on_progress)
+        )
 
-        if not plan:
-            history[-1]["content"] = "Could not generate a plan. Try rephrasing."
+        # Poll progress while generation runs
+        while not gen_task.done():
+            stage = status["stage"]
+            total = status["total"]
+            done = status["done"]
+
+            if stage == "planning":
+                msg = "**Planning** handbook structure..."
+            elif stage == "fetching_context":
+                msg = f"**Fetching** RAG context for {total} sections..."
+            elif stage == "writing":
+                msg = f"**Writing** sections — {done}/{total} complete..."
+            else:
+                msg = "**Processing...**"
+
+            history[-1]["content"] = msg
             yield history, gr.update()
-            return
+            await asyncio.sleep(0.5)
 
-        total = len(plan)
-        history[-1]["content"] = f"**Plan ready** — {total} sections. Writing..."
-        yield history, gr.update()
-
-        # Phase 2: Write each section
-        paragraphs = []
-        written_text = ""
-
-        for i, section in enumerate(plan):
-            para = None
-            for attempt in range(3):
-                try:
-                    ctx = await rag_engine.get_context(section.main_point)
-                    para = await handbook_gen.write_section(
-                        topic, plan, written_text, section, ctx
-                    )
-                    break
-                except Exception as e:
-                    logger.warning(f"Section {section.number} attempt {attempt+1}: {e}")
-                    if attempt < 2:
-                        await asyncio.sleep(3)
-
-            if not para:
-                para = f"*[Section {section.number}: {section.main_point} — skipped]*"
-                logger.error(f"Section {section.number} skipped")
-
-            paragraphs.append(para)
-            written_text += "\n\n" + para
-            wc = len(written_text.split())
-
-            history[-1]["content"] = (
-                f"**Writing** section {i+1}/{total} — {wc:,} words so far..."
-            )
-            yield history, gr.update()
-            await asyncio.sleep(1)
-
-        # Phase 3: Compile and save
-        final = handbook_gen.compile(topic, paragraphs, plan)
+        # Get result
+        final, plan = await gen_task
         path = handbook_gen.save(final, topic)
         wc = len(final.split())
         fname = os.path.basename(path)
@@ -188,7 +176,11 @@ async def _generate_handbook(
             f"*Showing first 2,000 chars. Full {wc:,}-word handbook available via download button below.*"
         )
         logger.info(f"Handbook complete: {wc:,} words -> {path}")
-        yield history, gr.update(value=path, visible=True)
+        yield history, gr.DownloadButton(
+            label=f"Download Handbook ({wc:,} words)",
+            value=path,
+            visible=True,
+        )
 
     except Exception as e:
         logger.error(f"Handbook failed: {e}")

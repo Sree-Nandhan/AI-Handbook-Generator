@@ -121,7 +121,7 @@ class RAGEngine:
         self._rag = LightRAG(
             working_dir=LIGHTRAG_WORKING_DIR,
             llm_model_func=grok_complete,
-            llm_model_max_async=4,
+            llm_model_max_async=12,
             embedding_func=EmbeddingFunc(
                 embedding_dim=EMBEDDING_DIM,
                 max_token_size=8192,
@@ -132,12 +132,20 @@ class RAGEngine:
             kv_storage="PGKVStorage",
             doc_status_storage="PGDocStatusStorage",
             embedding_batch_num=8,
-            embedding_func_max_async=4,
+            embedding_func_max_async=8,
         )
 
         await self._rag.initialize_storages()
         self._initialized = True
-        logger.info("LightRAG initialized")
+
+        # Check if knowledge graph already has data from previous sessions
+        graph_file = os.path.join(LIGHTRAG_WORKING_DIR, "graph_chunk_entity_relation.graphml")
+        if os.path.exists(graph_file) and os.path.getsize(graph_file) > 1000:
+            self._has_documents = True
+            size_kb = os.path.getsize(graph_file) // 1024
+            logger.info(f"LightRAG initialized — found existing KG ({size_kb} KB)")
+        else:
+            logger.info("LightRAG initialized — empty knowledge graph")
 
     async def insert(self, text: str) -> None:
         """Insert document text into the knowledge graph."""
@@ -154,6 +162,35 @@ class RAGEngine:
             return "No documents indexed yet. Upload and index a PDF first."
         logger.info(f"Query [{mode}]: {question[:80]}...")
         result = await self._rag.aquery(question, param=QueryParam(mode=mode))
+
+        # If LightRAG returns no-context, try naive mode (pure vector search)
+        if not result or "[no-context]" in result or len(result.strip()) < 20:
+            logger.warning("Hybrid query returned no context, falling back to naive mode")
+            try:
+                result = await self._rag.aquery(question, param=QueryParam(mode="naive"))
+            except Exception:
+                pass
+
+        # If still no context, try local mode
+        if not result or "[no-context]" in result or len(result.strip()) < 20:
+            logger.warning("Naive query also failed, trying local mode")
+            try:
+                result = await self._rag.aquery(question, param=QueryParam(mode="local"))
+            except Exception:
+                pass
+
+        # Final fallback — direct LLM call with global context
+        if not result or "[no-context]" in result or len(result.strip()) < 20:
+            logger.warning("All RAG modes failed, using direct LLM with global context")
+            try:
+                result = await self._direct_answer(question)
+            except Exception as e:
+                logger.error(f"Direct answer failed: {e}")
+                result = (
+                    "I couldn't find a specific answer in the knowledge graph. "
+                    "Try asking about specific topics, methods, or findings from the paper."
+                )
+
         logger.info(f"Query result: {len(result)} chars")
         return result
 
@@ -166,6 +203,48 @@ class RAGEngine:
         except Exception as e:
             logger.warning(f"Context retrieval failed: {e}")
             return ""
+
+    async def _direct_answer(self, question: str) -> str:
+        """Fallback: pull raw chunks from DB and answer directly via Grok."""
+        import asyncpg
+        from app.config import (
+            POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER,
+            POSTGRES_PASSWORD, POSTGRES_DATABASE,
+        )
+
+        # Get raw document chunks from Supabase
+        conn = await asyncpg.connect(
+            host=POSTGRES_HOST, port=POSTGRES_PORT, user=POSTGRES_USER,
+            password=POSTGRES_PASSWORD, database=POSTGRES_DATABASE, ssl="require",
+        )
+
+        # Embed the question and find closest chunks
+        q_emb = await local_embed([question])
+        vec_str = "[" + ",".join(str(x) for x in q_emb[0]) + "]"
+
+        rows = await conn.fetch(
+            "SELECT content FROM lightrag_vdb_chunks "
+            "ORDER BY content_vector <=> $1::vector LIMIT 8",
+            vec_str,
+        )
+        await conn.close()
+
+        if not rows:
+            return ""
+
+        context = "\n\n".join(r["content"] for r in rows)
+
+        # Direct Grok call with the context
+        answer = await grok_complete(
+            prompt=(
+                f"Based on the following document excerpts, answer this question:\n\n"
+                f"Question: {question}\n\n"
+                f"Document excerpts:\n{context[:6000]}\n\n"
+                f"Provide a detailed, accurate answer based on the documents."
+            ),
+            system_prompt="You are a helpful research assistant. Answer based on the provided documents.",
+        )
+        return answer
 
     @property
     def has_documents(self) -> bool:
