@@ -35,10 +35,29 @@ THEME = gr.themes.Soft(
     input_border_color_focus="#6366f1",
     input_border_width="1.5px",
     input_shadow_focus="0 0 0 3px rgba(99,102,241,0.1)",
+    border_color_accent="transparent",
+    border_color_accent_subdued="transparent",
 )
 
 CSS = """
 #app-container { max-width: 900px; margin: 0 auto; }
+
+/* Kill all purple/indigo accent borders */
+* {
+    --border-color-accent: transparent !important;
+    --border-color-accent-subdued: transparent !important;
+}
+#app-container * {
+    border-color: transparent !important;
+}
+#app-container input,
+#app-container textarea {
+    border-color: #e2e8f0 !important;
+}
+#app-container input:focus,
+#app-container textarea:focus {
+    border-color: #6366f1 !important;
+}
 
 #hero {
     text-align: center;
@@ -79,30 +98,29 @@ CSS = """
     font-weight: 600 !important;
 }
 
-/* Progress bar — clear space, no overlap */
-.progress-bar, .wrap {
-    z-index: 1000 !important;
-    position: relative !important;
-    margin-top: 16px !important;
-    clear: both !important;
+/* Live progress bar */
+#progress-bar-container {
+    margin: 12px 0 8px;
 }
-.progress-text {
-    font-family: 'Inter', system-ui, sans-serif !important;
-    font-size: 0.9rem !important;
-    color: #94a3b8 !important;
-    margin-bottom: 8px !important;
+#progress-bar-container .progress-track {
+    width: 100%;
+    height: 10px;
+    background: #e2e8f0;
+    border-radius: 999px;
+    overflow: hidden;
 }
-
-/* Progress bar styling */
-.uploading-note {
-    text-align: center;
-    padding: 12px;
-    color: #4f46e5;
-    font-weight: 500;
-    font-size: 0.95rem;
-    background: #eef2ff;
-    border-radius: 8px;
-    margin: 8px 0;
+#progress-bar-container .progress-fill {
+    height: 100%;
+    background: linear-gradient(135deg, #4f46e5, #7c3aed);
+    border-radius: 999px;
+    transition: width 0.4s ease;
+}
+@keyframes pulse-glow {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(79,70,229,0.3); }
+    50% { box-shadow: 0 0 8px 2px rgba(79,70,229,0.3); }
+}
+#progress-bar-container .progress-fill.active {
+    animation: pulse-glow 1.5s ease-in-out infinite;
 }
 """
 
@@ -150,6 +168,7 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                         "Cancel", variant="secondary", elem_id="cancel-btn",
                         scale=1, visible=False,
                     )
+                progress_bar = gr.HTML("", elem_id="progress-bar-container", visible=False)
                 upload_status = gr.Markdown("")
 
             # ── Phase 2: Chat (hidden until upload) ──
@@ -187,24 +206,36 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
 
         # ── Wiring ──
 
-        async def process_upload(files, progress=gr.Progress(track_tqdm=True)):
-            """Upload files with progress, then show chat section."""
+        def _progress_html(frac: float) -> str:
+            pct = max(0, min(100, int(frac * 100)))
+            active = "active" if pct < 100 else ""
+            return (
+                f'<div class="progress-track">'
+                f'<div class="progress-fill {active}" style="width:{pct}%"></div>'
+                f'</div>'
+            )
+
+        async def process_upload(files):
+            """Upload files with live progress bar, then show chat section."""
             if not files:
-                return (
+                yield (
+                    gr.update(),            # progress_bar
                     "Please select PDF files to upload.",
                     gr.update(),
                     gr.update(),
                     gr.update(),
                 )
+                return
 
-            status = await handle_upload(files, rag_engine, progress)
-
-            return (
-                status,
-                gr.update(visible=False),  # hide upload
-                gr.update(visible=True),   # show chat
-                gr.update(visible=False),  # hide cancel
-            )
+            async for status_text, frac in handle_upload(files, rag_engine):
+                is_done = frac >= 1.0
+                yield (
+                    gr.update(value=_progress_html(frac), visible=not is_done),
+                    status_text,
+                    gr.update(visible=False) if is_done else gr.update(),  # upload_section
+                    gr.update(visible=True) if is_done else gr.update(),   # chat_section
+                    gr.update(visible=False) if is_done else gr.update(),  # cancel_btn
+                )
 
         # Show Index button when files are selected
         file_upload.change(
@@ -215,15 +246,15 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
 
         # Index button hides, cancel appears
         def on_index_start():
-            return gr.update(visible=False), gr.update(visible=True)
+            return gr.update(visible=False), gr.update(visible=True), gr.update(visible=True, value=_progress_html(0))
 
         index_event = index_btn.click(
             fn=on_index_start,
-            outputs=[index_btn, cancel_btn],
+            outputs=[index_btn, cancel_btn, progress_bar],
         ).then(
             fn=process_upload,
             inputs=[file_upload],
-            outputs=[upload_status, upload_section, chat_section, cancel_btn],
+            outputs=[progress_bar, upload_status, upload_section, chat_section, cancel_btn],
         )
 
         # Cancel stops indexing, restores Index button
@@ -231,8 +262,8 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
             fn=None,
             cancels=[index_event],
         ).then(
-            fn=lambda: (gr.update(visible=True), gr.update(visible=False), "Indexing cancelled."),
-            outputs=[index_btn, cancel_btn, upload_status],
+            fn=lambda: (gr.update(visible=True), gr.update(visible=False), gr.update(visible=False), "Indexing cancelled."),
+            outputs=[index_btn, cancel_btn, progress_bar, upload_status],
         )
 
         # Chat wiring

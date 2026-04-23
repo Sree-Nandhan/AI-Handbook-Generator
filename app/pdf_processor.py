@@ -46,7 +46,7 @@ def extract_text(pdf_path: str) -> str:
 
 
 def _clean_text(raw_text: str) -> str:
-    """Normalize whitespace and strip references/bibliography."""
+    """Normalize whitespace, keeping references intact."""
     text = raw_text.replace("\x00", "")
     text = re.sub(r"\n{3,}", "\n\n", text)
     text = re.sub(r"[ \t]+", " ", text)
@@ -54,7 +54,66 @@ def _clean_text(raw_text: str) -> str:
     lines = text.split("\n")
     text = "\n".join(line.strip() for line in lines)
 
-    # Strip references section at the end
+    return text.strip()
+
+
+def extract_title(pdf_path: str) -> str:
+    """Extract the research paper title from the first page of a PDF.
+
+    Heuristic: the title is typically the first substantial line(s) on page 1,
+    usually the largest / most prominent text before the abstract or authors.
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            if not pdf.pages:
+                return ""
+            first_page = pdf.pages[0].extract_text() or ""
+    except Exception:
+        return ""
+
+    lines = [l.strip() for l in first_page.split("\n") if l.strip()]
+    if not lines:
+        return ""
+
+    # Skip lines that look like headers/footers (very short, page numbers, dates)
+    skip = re.compile(
+        r"^(page\s*\d|arxiv|preprint|submitted|accepted|doi:|http|©|\d{4}$)",
+        re.IGNORECASE,
+    )
+
+    title_parts = []
+    for line in lines:
+        if skip.match(line):
+            continue
+        # Stop at "Abstract", author lines, etc.
+        if re.match(r"^(Abstract|ABSTRACT|Keywords|Introduction|Author)", line):
+            break
+        # Author-like lines: contain @, university keywords, or camelCase names
+        if "@" in line or re.search(r"\d{5,}", line):
+            break
+        # Detect author name patterns: "FirstLast, FirstLast" or "First Last,"
+        # CamelCase concatenated names like "AlbertQ.Jiang,Alexandre..."
+        if re.search(r"[a-z][A-Z][a-z].*[A-Z][a-z]", line) and "," in line:
+            break
+        # Names with asterisks (corresponding author markers)
+        if "∗" in line or "†" in line:
+            break
+        title_parts.append(line)
+        # Titles are usually 1-2 lines
+        if len(title_parts) >= 2:
+            break
+
+    title = " ".join(title_parts).strip()
+    # Clean up common artifacts
+    title = re.sub(r"\s+", " ", title)
+    # Remove trailing numbers/markers
+    title = re.sub(r"\s*[\d∗†]+$", "", title)
+    return title if len(title) > 5 else ""
+
+
+def extract_references(raw_text: str) -> str:
+    """Extract the references/bibliography section from raw PDF text."""
+    text = raw_text.replace("\x00", "")
     for pattern in [
         r"\n\s*References\s*\n",
         r"\n\s*REFERENCES\s*\n",
@@ -63,7 +122,5 @@ def _clean_text(raw_text: str) -> str:
     ]:
         match = re.search(pattern, text)
         if match:
-            text = text[: match.start()]
-            break
-
-    return text.strip()
+            return text[match.start():].strip()
+    return ""

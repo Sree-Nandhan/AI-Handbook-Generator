@@ -7,7 +7,7 @@ import asyncio
 import logging
 import gradio as gr
 from app.rag_engine import RAGEngine
-from app.pdf_processor import extract_text, save_uploaded_file
+from app.pdf_processor import extract_text, extract_title, extract_references, save_uploaded_file
 from app.handbook_generator import HandbookGenerator
 
 logger = logging.getLogger("handbook.handlers")
@@ -26,20 +26,31 @@ HANDBOOK_KEYWORDS = [
 # Phase 1: Upload & index PDFs (with progress)
 # ---------------------------------------------------------------------------
 
-async def handle_upload(files: list, rag_engine: RAGEngine, progress=gr.Progress()):
-    """Process uploaded PDFs and index into LightRAG knowledge graph."""
+async def handle_upload(files: list, rag_engine: RAGEngine):
+    """Process uploaded PDFs and index into LightRAG knowledge graph.
+
+    This is an async generator that yields (status_markdown, progress_fraction)
+    tuples so the UI can show live progress.
+    """
     if not files:
-        return "Please select PDF files to upload."
+        yield "Please select PDF files to upload.", 0
+        return
 
     total = len(files)
     results = []
 
     for idx, f in enumerate(files):
         fname = os.path.basename(f)
+        file_num = f"[{idx + 1}/{total}]"
 
-        progress((idx * 3) / (total * 3), desc=f"Extracting text from {fname}...")
+        # ── Extract text (fast) ──
+        frac = idx / total
+        yield f"**{file_num} Extracting text** from `{fname}`...", frac
         try:
             path = save_uploaded_file(f)
+            # Extract research paper title from first page
+            paper_title = extract_title(path)
+            rag_engine.add_source_filename(paper_title if paper_title else fname)
             text = extract_text(path)
             if len(text) < 100:
                 results.append(f"**{fname}** — too little text extracted")
@@ -49,7 +60,23 @@ async def handle_upload(files: list, rag_engine: RAGEngine, progress=gr.Progress
             results.append(f"**{fname}** — extraction error: {e}")
             continue
 
-        progress((idx * 3 + 1) / (total * 3), desc=f"Indexing {fname} into knowledge graph...")
+        # ── Extract references before indexing ──
+        import pdfplumber
+        frac = (idx + 0.2) / total
+        yield f"**{file_num} Extracting references** from `{fname}`...", frac
+        try:
+            with pdfplumber.open(path) as pdf:
+                raw = "\n\n".join(p.extract_text() or "" for p in pdf.pages)
+            refs = extract_references(raw)
+            if refs:
+                rag_engine.add_references(fname, refs)
+                logger.info(f"Extracted references from {fname}: {len(refs)} chars")
+        except Exception as e:
+            logger.warning(f"Reference extraction failed for {fname}: {e}")
+
+        # ── Index (slow — show animated status) ──
+        frac = (idx + 0.4) / total
+        yield f"**{file_num} Indexing** `{fname}` into knowledge graph — this may take a moment...", frac
         try:
             await rag_engine.insert(text)
             results.append(f"**{fname}** — {len(text):,} chars indexed")
@@ -58,15 +85,14 @@ async def handle_upload(files: list, rag_engine: RAGEngine, progress=gr.Progress
             results.append(f"**{fname}** — indexing error: {e}")
             continue
 
-        progress((idx * 3 + 2) / (total * 3), desc=f"Finished {fname}")
+        frac = (idx + 1) / total
+        yield f"**{file_num} Done** — `{fname}` indexed successfully!", frac
 
-    progress(1.0, desc="Done!")
-
-    return (
-        "**Documents indexed!**\n\n"
+    yield (
+        "**All documents indexed!**\n\n"
         + "\n".join(f"- {r}" for r in results)
         + "\n\nYou can now ask questions or request a handbook."
-    )
+    ), 1.0
 
 
 # ---------------------------------------------------------------------------

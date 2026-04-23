@@ -72,12 +72,18 @@ def _encode_sync(texts: list[str]) -> np.ndarray:
         _embed_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
         logger.info("Embedding model loaded")
 
-    # Clean all texts first
-    cleaned = [_clean_for_embedding(t) for t in texts]
+    # Clean all texts and ensure they're plain strings (not numpy arrays or other types)
+    cleaned = []
+    for t in texts:
+        if isinstance(t, str):
+            cleaned.append(_clean_for_embedding(t))
+        else:
+            cleaned.append(_clean_for_embedding(str(t)))
 
     try:
-        emb = _embed_model.encode(cleaned, normalize_embeddings=True, batch_size=32)
-        return np.array(emb)
+        emb = _embed_model.encode(cleaned, normalize_embeddings=True, batch_size=64,
+                                   show_progress_bar=False)
+        return np.array(emb, dtype=np.float32)
     except Exception as e:
         logger.warning(f"Batch encode failed ({len(cleaned)} texts): {e}, encoding individually")
         results = []
@@ -87,7 +93,7 @@ def _encode_sync(texts: list[str]) -> np.ndarray:
                 results.append(emb[0])
             except Exception:
                 results.append(np.zeros(EMBEDDING_DIM))
-        return np.array(results)
+        return np.array(results, dtype=np.float32)
 
 
 async def local_embed(texts: list[str]) -> np.ndarray:
@@ -109,6 +115,8 @@ class RAGEngine:
         self._initialized = False
         self._rag: LightRAG | None = None
         self._has_documents = False
+        self._references: dict[str, str] = {}  # filename -> references text
+        self._source_filenames: list[str] = []  # uploaded PDF names
 
     async def initialize(self) -> None:
         """Initialize LightRAG with PostgreSQL storage backends."""
@@ -116,12 +124,16 @@ class RAGEngine:
             return
 
         os.makedirs(LIGHTRAG_WORKING_DIR, exist_ok=True)
+
+        # Verify embedding model consistency — if model changed, wipe stale data
+        await self._check_embedding_consistency()
+
         logger.info("Initializing LightRAG with PostgreSQL backends...")
 
         self._rag = LightRAG(
             working_dir=LIGHTRAG_WORKING_DIR,
             llm_model_func=grok_complete,
-            llm_model_max_async=12,
+            llm_model_max_async=24,
             embedding_func=EmbeddingFunc(
                 embedding_dim=EMBEDDING_DIM,
                 max_token_size=8192,
@@ -131,8 +143,8 @@ class RAGEngine:
             vector_storage="PGVectorStorage",
             kv_storage="PGKVStorage",
             doc_status_storage="PGDocStatusStorage",
-            embedding_batch_num=8,
-            embedding_func_max_async=8,
+            embedding_batch_num=16,
+            embedding_func_max_async=16,
         )
 
         await self._rag.initialize_storages()
@@ -245,6 +257,82 @@ class RAGEngine:
             system_prompt="You are a helpful research assistant. Answer based on the provided documents.",
         )
         return answer
+
+    async def _check_embedding_consistency(self):
+        """Detect if the embedding model changed since last indexing. If so, wipe stale data."""
+        model_file = os.path.join(LIGHTRAG_WORKING_DIR, ".embedding_model")
+        current_model = EMBEDDING_MODEL_NAME
+
+        if os.path.exists(model_file):
+            with open(model_file, "r") as f:
+                saved_model = f.read().strip()
+            if saved_model == current_model:
+                return  # Same model, no action needed
+            logger.warning(
+                f"Embedding model changed: {saved_model} -> {current_model}. "
+                f"Clearing stale data to prevent mismatched vectors."
+            )
+            await self._clear_all_data()
+
+        # Save current model name
+        with open(model_file, "w") as f:
+            f.write(current_model)
+
+    async def _clear_all_data(self):
+        """Drop all LightRAG tables and clear local graph."""
+        from app.config import (
+            POSTGRES_HOST, POSTGRES_PORT, POSTGRES_USER,
+            POSTGRES_PASSWORD, POSTGRES_DATABASE,
+        )
+        import asyncpg
+
+        try:
+            conn = await asyncpg.connect(
+                host=POSTGRES_HOST, port=POSTGRES_PORT, user=POSTGRES_USER,
+                password=POSTGRES_PASSWORD, database=POSTGRES_DATABASE, ssl="require",
+            )
+            tables = await conn.fetch(
+                "SELECT tablename FROM pg_tables WHERE tablename LIKE 'lightrag_%'"
+            )
+            for t in tables:
+                await conn.execute(f"DROP TABLE IF EXISTS {t['tablename']} CASCADE")
+            await conn.close()
+            logger.info(f"Dropped {len(tables)} stale LightRAG tables")
+        except Exception as e:
+            logger.error(f"Failed to clear stale DB: {e}")
+
+        # Clear local graph file
+        graph_file = os.path.join(LIGHTRAG_WORKING_DIR, "graph_chunk_entity_relation.graphml")
+        if os.path.exists(graph_file):
+            os.remove(graph_file)
+            logger.info("Cleared local graph file")
+
+    def add_source_filename(self, filename: str) -> None:
+        """Track uploaded PDF filenames for title generation."""
+        name = filename.rsplit(".", 1)[0]  # strip .pdf
+        if name not in self._source_filenames:
+            self._source_filenames.append(name)
+
+    def get_source_title(self) -> str:
+        """Return a title derived from uploaded source filenames."""
+        if not self._source_filenames:
+            return ""
+        if len(self._source_filenames) == 1:
+            return self._source_filenames[0]
+        return self._source_filenames[0]  # use first paper as primary title
+
+    def add_references(self, filename: str, references: str) -> None:
+        """Store extracted references from a source document."""
+        self._references[filename] = references
+
+    def get_references(self) -> str:
+        """Return all stored references, formatted for the handbook."""
+        if not self._references:
+            return ""
+        parts = []
+        for fname, refs in self._references.items():
+            parts.append(refs)
+        return "\n\n".join(parts)
 
     @property
     def has_documents(self) -> bool:
