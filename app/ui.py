@@ -191,7 +191,7 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                     )
                     send_btn = gr.Button("Send", variant="primary", scale=1, elem_id="send-btn")
 
-                download = gr.DownloadButton(
+                download_pdf = gr.DownloadButton(
                     label="Download Handbook",
                     visible=False,
                     variant="primary",
@@ -283,7 +283,7 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
         ).then(
             fn=on_chat,
             inputs=[stored_msg, chatbot],
-            outputs=[chatbot, download],
+            outputs=[chatbot, download_pdf],
             show_progress="minimal",
         )
 
@@ -294,7 +294,7 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
         ).then(
             fn=on_chat,
             inputs=[stored_msg, chatbot],
-            outputs=[chatbot, download],
+            outputs=[chatbot, download_pdf],
             show_progress="minimal",
         )
 

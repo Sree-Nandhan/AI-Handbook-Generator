@@ -45,8 +45,8 @@ POSTGRES_DATABASE = os.getenv("POSTGRES_DATABASE", "postgres")
 # LightRAG
 # ---------------------------------------------------------------------------
 LIGHTRAG_WORKING_DIR = os.getenv("LIGHTRAG_WORKING_DIR", "./rag_storage")
-CHUNK_TOKEN_SIZE = int(os.getenv("LIGHTRAG_CHUNK_TOKEN_SIZE", "1200"))
-CHUNK_OVERLAP = int(os.getenv("LIGHTRAG_CHUNK_OVERLAP", "100"))
+CHUNK_TOKEN_SIZE = int(os.getenv("LIGHTRAG_CHUNK_TOKEN_SIZE", "2400"))
+CHUNK_OVERLAP = int(os.getenv("LIGHTRAG_CHUNK_OVERLAP", "200"))
 
 # ---------------------------------------------------------------------------
 # Embedding

@@ -400,12 +400,11 @@ class HandbookGenerator:
             f"{refs_section}"
         )
 
-    def save(self, handbook_md: str, topic: str = "handbook") -> str:
-        """Save handbook as Markdown and PDF with unique timestamped name."""
+    def save(self, handbook_md: str, topic: str = "handbook") -> tuple[str, str]:
+        """Save handbook as Markdown and PDF. Returns (pdf_path, md_path)."""
         os.makedirs(OUTPUT_DIR, exist_ok=True)
 
         # Extract a clean short name from the topic
-        # Remove common filler words to get the core subject
         filler = ["create", "a", "the", "on", "about", "for", "of", "handbook", "generate", "write", "make"]
         words = topic.lower().split()
         core = [w for w in words if w not in filler and w.isalpha()]
@@ -425,9 +424,9 @@ class HandbookGenerator:
             logger.info(f"PDF saved: {pdf_path}")
         except Exception as e:
             logger.error(f"PDF generation failed: {e}")
-            return md_path
+            return md_path, md_path
 
-        return pdf_path
+        return pdf_path, md_path
 
 
 # ---------------------------------------------------------------------------

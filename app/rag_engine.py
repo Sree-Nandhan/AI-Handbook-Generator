@@ -133,7 +133,7 @@ class RAGEngine:
         self._rag = LightRAG(
             working_dir=LIGHTRAG_WORKING_DIR,
             llm_model_func=grok_complete,
-            llm_model_max_async=24,
+            llm_model_max_async=32,
             embedding_func=EmbeddingFunc(
                 embedding_dim=EMBEDDING_DIM,
                 max_token_size=8192,

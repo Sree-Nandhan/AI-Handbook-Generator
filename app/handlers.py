@@ -191,9 +191,9 @@ async def _generate_handbook(
 
         # Get result
         final, plan = await gen_task
-        path = handbook_gen.save(final, topic)
+        pdf_path, md_path = handbook_gen.save(final, topic)
         wc = len(final.split())
-        fname = os.path.basename(path)
+        fname = os.path.basename(pdf_path)
 
         history[-1]["content"] = (
             f"**Handbook complete!** {wc:,} words generated.\n\n"
@@ -201,10 +201,10 @@ async def _generate_handbook(
             f"---\n\n{final[:2000]}...\n\n---\n\n"
             f"*Showing first 2,000 chars. Full {wc:,}-word handbook available via download button below.*"
         )
-        logger.info(f"Handbook complete: {wc:,} words -> {path}")
+        logger.info(f"Handbook complete: {wc:,} words -> {pdf_path}")
         yield history, gr.DownloadButton(
             label=f"Download Handbook ({wc:,} words)",
-            value=path,
+            value=pdf_path,
             visible=True,
         )
 
