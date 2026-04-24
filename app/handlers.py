@@ -82,14 +82,26 @@ async def handle_upload(files: list, rag_engine: RAGEngine):
             logger.warning(f"Reference extraction failed for {fname}: {e}")
             num_pages = len(text) // 3000
 
-        est_seconds = max(10, int(len(text) / 10000 * 5))
-        est_str = f"~{est_seconds // 60}m {est_seconds % 60}s" if est_seconds >= 60 else f"~{est_seconds}s"
+        # Estimate based on observed rates: ~1.7s per 1K chars, ~7s per page
+        # Use whichever gives a higher estimate for safety
+        import time as _time
+        est_by_chars = int(len(text) / 1000 * 1.7)
+        est_by_pages = num_pages * 7
+        est_seconds = max(15, max(est_by_chars, est_by_pages))
+        if est_seconds >= 60:
+            est_str = f"~{est_seconds // 60}m {est_seconds % 60}s"
+        else:
+            est_str = f"~{est_seconds}s"
 
         frac = (idx + 0.4) / total
-        yield f"**{file_num} Indexing** `{fname}` ({num_pages} pages) — est. {est_str}", frac
+        yield f"**{file_num} Indexing** `{fname}` ({num_pages} pages, {len(text)//1000}K chars) — est. {est_str}", frac
+        t_index_start = _time.time()
         try:
             await rag_engine.insert(text)
-            results.append(f"**{fname}** — {len(text):,} chars indexed")
+            t_index_end = _time.time()
+            actual = int(t_index_end - t_index_start)
+            results.append(f"**{fname}** — {len(text):,} chars indexed in {actual}s")
+            logger.info(f"Indexed {fname}: {len(text):,} chars, {num_pages} pages in {actual}s")
         except Exception as e:
             logger.error(f"Failed to index {fname}: {e}")
             results.append(f"**{fname}** — indexing error: {e}")
@@ -150,9 +162,6 @@ async def handle_chat_message(
 
     # ── Handbook generation ──
     if any(kw in lower_text for kw in HANDBOOK_KEYWORDS):
-        if not rag_engine.has_documents:
-            yield "Please upload and index PDF documents first.", gr.update()
-            return
         bare = lower_text.strip() in ["handbook", "create handbook", "generate handbook", "make handbook"]
         if bare and _last_handbook_topic:
             yield (
@@ -164,6 +173,20 @@ async def handle_chat_message(
             return
         async for resp, dl in _generate_handbook(user_text, rag_engine, handbook_gen):
             yield resp, dl
+        return
+
+    # ── Simple greetings — don't hit RAG ──
+    greetings = ["hello", "hi", "hey", "yo", "sup", "howdy", "greetings", "good morning",
+                 "good afternoon", "good evening", "thanks", "thank you", "ok", "okay",
+                 "bye", "goodbye", "help"]
+    if lower_text.strip().rstrip("!?.") in greetings:
+        yield (
+            "Hello! I'm your Research Master AI. Here's what I can do:\n\n"
+            "- **Ask questions** about your uploaded papers\n"
+            "- **Create a handbook** — e.g., 'Create a handbook on Machine Learning'\n"
+            "- **Show handbooks** — view previously generated handbooks\n\n"
+            "What would you like to know?"
+        ), gr.update()
         return
 
     # ── Regular Q&A ──

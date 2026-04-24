@@ -172,71 +172,34 @@ class RAGEngine:
         logger.info("Document indexed")
 
     async def query(self, question: str, mode: str = "hybrid") -> str:
-        """Query the knowledge graph for an answer."""
-        if not self._has_documents:
-            return "No documents indexed yet. Upload and index a PDF first."
-        logger.info(f"Query [{mode}]: {question[:80]}...")
-        result = await self._rag.aquery(question, param=QueryParam(mode=mode))
+        """Query the knowledge graph — uses direct vector search with paper attribution
+        as the primary path for accurate source attribution."""
+        logger.info(f"Query: {question[:80]}...")
 
-        # If LightRAG returns no-context, try naive mode (pure vector search)
-        if not result or "[no-context]" in result or len(result.strip()) < 20:
-            logger.warning("Hybrid query returned no context, falling back to naive mode")
-            try:
-                result = await self._rag.aquery(question, param=QueryParam(mode="naive"))
-            except Exception:
-                pass
+        # Primary path: direct vector search + Grok with paper titles
+        # This ensures accurate attribution to the correct uploaded papers
+        try:
+            result = await self._direct_answer(question)
+            if result and len(result.strip()) > 50:
+                logger.info(f"Query result (direct): {len(result)} chars")
+                return result
+        except Exception as e:
+            logger.warning(f"Direct answer failed: {e}")
 
-        # If still no context, try local mode
-        if not result or "[no-context]" in result or len(result.strip()) < 20:
-            logger.warning("Naive query also failed, trying local mode")
-            try:
-                result = await self._rag.aquery(question, param=QueryParam(mode="local"))
-            except Exception:
-                pass
+        # Fallback: LightRAG knowledge graph query
+        try:
+            result = await self._rag.aquery(question, param=QueryParam(mode=mode))
+            if result and "[no-context]" not in result and len(result.strip()) >= 20:
+                logger.info(f"Query result (RAG {mode}): {len(result)} chars")
+                return result
+        except Exception as e:
+            logger.warning(f"RAG query failed: {e}")
 
-        # Final fallback — direct LLM call with global context
-        if not result or "[no-context]" in result or len(result.strip()) < 20:
-            logger.warning("All RAG modes failed, using direct LLM with global context")
-            try:
-                result = await self._direct_answer(question)
-            except Exception as e:
-                logger.error(f"Direct answer failed: {e}")
-                result = (
-                    "I couldn't find a specific answer in the knowledge graph. "
-                    "Try asking about specific topics, methods, or findings from the paper."
-                )
-
-        # If the response seems confused or unhelpful, bypass RAG and answer directly
-        # from document chunks in the database
-        confused_markers = [
-            "do not have enough information",
-            "no specific document",
-            "no single cohesive",
-            "no reference_ids available",
-            "cannot identify",
-            "too fragmented",
-            "i'm sorry",
-            "i apologize",
-            "not contain complete",
-            "no specific pdf",
-            "empty reference_id",
-            "not identifiable",
-            "cannot provide",
-            "no complete pdf",
-            "lack reference",
-        ]
-        lower_result = result.lower()
-        if any(m in lower_result for m in confused_markers):
-            logger.warning("Response seems confused, using direct synthesis from chunks")
-            try:
-                direct = await self._direct_answer(question)
-                if direct and len(direct.strip()) > 50:
-                    result = direct
-            except Exception:
-                pass
-
-        logger.info(f"Query result: {len(result)} chars")
-        return result
+        # Last resort
+        return (
+            "I couldn't find a specific answer in the uploaded papers. "
+            "Try asking about specific topics, methods, or findings."
+        )
 
     async def get_context(self, topic: str) -> str:
         """Retrieve knowledge graph context for handbook generation."""
@@ -278,17 +241,29 @@ class RAGEngine:
 
         context = "\n\n".join(r["content"] for r in rows)
 
+        # Build paper list for attribution
+        paper_list = ""
+        if self._source_filenames:
+            papers = [f"  Paper {i+1}: \"{name}\"" for i, name in enumerate(self._source_filenames)]
+            paper_list = (
+                f"The user uploaded these specific papers:\n"
+                + "\n".join(papers)
+                + "\n\nIMPORTANT: Only reference these papers. Do NOT invent or confuse paper names. "
+                f"Match each excerpt to its source paper based on content, authors, and topic.\n\n"
+            )
+
         # Direct Grok call with the context
         answer = await grok_complete(
             prompt=(
                 f"You are a Research Master AI. A user uploaded research papers and asked:\n\n"
                 f'"{question}"\n\n'
+                f"{paper_list}"
                 f"Here are the most relevant excerpts from their uploaded papers:\n\n"
                 f"{context[:8000]}\n\n"
                 f"Provide a detailed, scholarly answer following these rules:\n"
-                f"- Reference specific papers by author names and findings\n"
-                f"- Cite specific sections, figures, tables, or equations when mentioned in the text\n"
-                f"- Indicate which paper/source each piece of information comes from\n"
+                f"- ONLY reference the papers listed above — do not invent paper names\n"
+                f"- Clearly label which paper each piece of information comes from\n"
+                f"- Reference specific authors, sections, figures, tables, or equations\n"
                 f"- Use academic formatting: numbered references, proper citations\n"
                 f"- Include specific data points, statistics, and metrics from the papers\n"
                 f"- Be comprehensive but well-organized with clear headings\n"
@@ -296,10 +271,10 @@ class RAGEngine:
             ),
             system_prompt=(
                 "You are a Research Master — an expert academic assistant specializing in analyzing "
-                "uploaded research papers. You provide precise, citation-rich answers that reference "
-                "specific authors, page sections, figures, tables, and findings from the source documents. "
-                "Format responses with clear structure: headings, bullet points, and numbered references. "
-                "Always attribute information to its source paper. Never refuse to answer."
+                "uploaded research papers. You provide precise, citation-rich answers. "
+                "CRITICAL: Only reference papers the user actually uploaded. Never confuse or invent "
+                "paper titles. Match content to its correct source paper based on authors and topic. "
+                "Format responses with clear structure: headings, bullet points, and numbered references."
             ),
         )
         return answer
