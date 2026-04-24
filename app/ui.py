@@ -184,7 +184,6 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 variant="primary",
                 elem_id="download-btn",
             )
-            refresh_btn = gr.Button("Upload New PDFs", variant="secondary", size="sm")
 
             # Timer checks for handbook completion every 2s
             timer = gr.Timer(value=2, active=True)
@@ -214,21 +213,6 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
 
             timer.tick(fn=_check_handbook, inputs=[chatbot], outputs=[download_btn])
 
-            # New Session button — clears everything, goes back to upload
-            def _new_session():
-                from app.handlers import reset_session
-                reset_session()
-                return (
-                    gr.update(visible=True),   # upload_page
-                    gr.update(visible=False),  # chat_page
-                    [],                        # chatbot
-                    gr.DownloadButton(visible=False),  # download
-                )
-
-            refresh_btn.click(
-                fn=_new_session,
-                outputs=[upload_page, chat_page, chatbot, download_btn],
-            )
 
 
 
