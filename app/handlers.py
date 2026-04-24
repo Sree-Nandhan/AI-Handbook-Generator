@@ -38,12 +38,19 @@ _session_start_time = 0.0
 
 
 def reset_session():
-    """Clear session state — called on app startup."""
+    """Clear session state — called on app startup. Deletes old handbook files."""
     global _last_handbook_topic, _last_handbook_path, _session_start_time
-    import time
+    import time, shutil
     _last_handbook_topic = ""
     _last_handbook_path = ""
     _session_start_time = time.time()
+
+    # Delete all old handbooks so nothing stale can be found
+    handbooks_dir = os.path.join("outputs", "handbooks")
+    if os.path.exists(handbooks_dir):
+        shutil.rmtree(handbooks_dir)
+        os.makedirs(handbooks_dir, exist_ok=True)
+        logger.info("Cleared old handbooks from previous sessions")
 
 
 # ---------------------------------------------------------------------------

@@ -102,7 +102,7 @@ body { overflow: hidden !important; }
 }
 
 /* ── Phase 2: Chat page ── */
-#download-btn {
+#download-btn, #download-file {
     min-height: 48px !important;
     font-weight: 600 !important;
     font-size: 1rem !important;
@@ -178,6 +178,28 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 fill_height=True,
             )
 
+            # Download file — hidden, appears after handbook generation
+            download_file = gr.File(
+                label="Download Handbook",
+                visible=False,
+                elem_id="download-file",
+            )
+
+            # Check for new handbook whenever chatbot updates
+            def _check_handbook():
+                from app import handlers
+                path = handlers._last_handbook_path
+                start = handlers._session_start_time
+                if not path or not start:
+                    return gr.update(visible=False)
+                if not os.path.exists(path):
+                    return gr.update(visible=False)
+                if os.path.getmtime(path) < start:
+                    return gr.update(visible=False)
+                return gr.update(value=path, visible=True)
+
+            chatbot.change(fn=_check_handbook, outputs=[download_file])
+
 
 
         # ════════════════════════════════════════════
@@ -237,6 +259,6 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
 
 
 async def _chat_fn(message, history, *, rag_engine, handbook_gen):
-    """Chat function for ChatInterface — yields response strings only."""
+    """Chat function for ChatInterface — yields response strings."""
     async for response, _dl in handle_chat_message(message, history, rag_engine, handbook_gen):
         yield response
