@@ -196,7 +196,12 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 if not chat_history:
                     return gr.DownloadButton(visible=False)
                 for msg in reversed(chat_history[-5:]):
-                    content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
+                    if isinstance(msg, dict):
+                        content = msg.get("content", "")
+                        if isinstance(content, list):
+                            content = " ".join(str(c) for c in content)
+                    else:
+                        content = str(msg)
                     if "handbook complete" in content.lower():
                         from app import handlers
                         path = handlers._last_handbook_path
