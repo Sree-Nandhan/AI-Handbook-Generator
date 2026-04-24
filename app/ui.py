@@ -156,18 +156,6 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
         # ════════════════════════════════════════════
         with gr.Column(visible=False) as chat_page:
 
-            with gr.Sidebar(label="PaperLens", open=True):
-                gr.Markdown("### Actions")
-                download_btn = gr.DownloadButton(
-                    label="Download Handbook PDF",
-                    visible=False,
-                    variant="primary",
-                    elem_id="download-btn",
-                )
-                refresh_btn = gr.Button("New Session (Upload New PDFs)", variant="secondary")
-                gr.Markdown("---")
-                gr.Markdown("<small>Grok 4.1 · LightRAG · Supabase</small>")
-
             chatbot = gr.Chatbot(
                 placeholder=(
                     "<h2 style='font-weight:700;color:#4f46e5;'>Ready to chat!</h2>"
@@ -188,6 +176,15 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 title=None,
                 fill_height=True,
             )
+
+            # Download button + New Session below chat
+            download_btn = gr.DownloadButton(
+                label="Download Handbook PDF",
+                visible=False,
+                variant="primary",
+                elem_id="download-btn",
+            )
+            refresh_btn = gr.Button("Upload New PDFs", variant="secondary", size="sm")
 
             # Timer checks for handbook completion every 2s
             timer = gr.Timer(value=2, active=True)
