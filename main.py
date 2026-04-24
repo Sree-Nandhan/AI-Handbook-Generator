@@ -28,6 +28,10 @@ def main():
 
     engine, generator = asyncio.run(startup())
 
+    # Clear any stale session state
+    from app.handlers import reset_session
+    reset_session()
+
     app = ui.build(engine, generator)
     app.queue()
     app.launch(

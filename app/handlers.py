@@ -34,6 +34,16 @@ LOADING_MSGS = [
 
 _last_handbook_topic = ""
 _last_handbook_path = ""
+_session_start_time = 0.0
+
+
+def reset_session():
+    """Clear session state — called on app startup."""
+    global _last_handbook_topic, _last_handbook_path, _session_start_time
+    import time
+    _last_handbook_topic = ""
+    _last_handbook_path = ""
+    _session_start_time = time.time()
 
 
 # ---------------------------------------------------------------------------
