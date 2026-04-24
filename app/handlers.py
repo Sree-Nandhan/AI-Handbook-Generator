@@ -204,12 +204,26 @@ async def handle_chat(
         return
 
     # Regular Q&A
+    import random
+    loading_msgs = [
+        "Diving into the research papers...",
+        "Analyzing the knowledge graph...",
+        "Cross-referencing findings...",
+        "Consulting the research corpus...",
+        "Mining insights from your papers...",
+        "Connecting the dots across documents...",
+        "Synthesizing information...",
+        "Searching through the literature...",
+    ]
+    history.append({"role": "assistant", "content": f"*{random.choice(loading_msgs)}*"})
+    yield history, gr.update()
+
     try:
         response = await rag_engine.query(user_text)
-        history.append({"role": "assistant", "content": response})
+        history[-1]["content"] = response
     except Exception as e:
         logger.error(f"Query failed: {e}")
-        history.append({"role": "assistant", "content": f"Error: {e}"})
+        history[-1]["content"] = f"Error: {e}"
     yield history, gr.update()
 
 

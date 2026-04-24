@@ -278,19 +278,25 @@ class RAGEngine:
         # Direct Grok call with the context
         answer = await grok_complete(
             prompt=(
-                f"A user uploaded research papers and asked: \"{question}\"\n\n"
+                f"You are a Research Master AI. A user uploaded research papers and asked:\n\n"
+                f'"{question}"\n\n'
                 f"Here are the most relevant excerpts from their uploaded papers:\n\n"
                 f"{context[:8000]}\n\n"
-                f"Provide a detailed, comprehensive answer. Synthesize information across "
-                f"all excerpts. If the question is broad (like 'summarize'), provide a "
-                f"thorough overview of the key topics, findings, and methodologies covered "
-                f"in the papers. Always give a substantive answer."
+                f"Provide a detailed, scholarly answer following these rules:\n"
+                f"- Reference specific papers by author names and findings\n"
+                f"- Cite specific sections, figures, tables, or equations when mentioned in the text\n"
+                f"- Indicate which paper/source each piece of information comes from\n"
+                f"- Use academic formatting: numbered references, proper citations\n"
+                f"- Include specific data points, statistics, and metrics from the papers\n"
+                f"- Be comprehensive but well-organized with clear headings\n"
+                f"- Never say you don't have enough information — synthesize what's available"
             ),
             system_prompt=(
-                "You are a research assistant helping users understand their uploaded papers. "
-                "Always provide helpful, detailed answers. The excerpts may come from multiple "
-                "papers — synthesize them into one coherent response. Never say you can't answer "
-                "or that information is insufficient. Use whatever context is available."
+                "You are a Research Master — an expert academic assistant specializing in analyzing "
+                "uploaded research papers. You provide precise, citation-rich answers that reference "
+                "specific authors, page sections, figures, tables, and findings from the source documents. "
+                "Format responses with clear structure: headings, bullet points, and numbered references. "
+                "Always attribute information to its source paper. Never refuse to answer."
             ),
         )
         return answer

@@ -122,6 +122,18 @@ CSS = """
 #progress-bar-container .progress-fill.active {
     animation: pulse-glow 1.5s ease-in-out infinite;
 }
+
+/* Loading dots animation */
+@keyframes loading-dots {
+    0%, 20% { content: '.'; }
+    40% { content: '..'; }
+    60%, 100% { content: '...'; }
+}
+.loading-msg {
+    color: #6366f1;
+    font-weight: 500;
+    font-style: italic;
+}
 """
 
 # ---------------------------------------------------------------------------

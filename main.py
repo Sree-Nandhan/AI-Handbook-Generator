@@ -35,7 +35,14 @@ def main():
         server_port=APP_PORT,
         theme=ui.THEME,
         css=ui.CSS,
-        js="() => { document.querySelector('body').classList.remove('dark'); }",
+        js="""() => {
+    document.querySelector('body').classList.remove('dark');
+    // Auto-focus chat input
+    setTimeout(() => {
+        const input = document.querySelector('#component-16 textarea, textarea[placeholder*="Ask a question"]');
+        if (input) input.focus();
+    }, 500);
+}""",
     )
 
 
