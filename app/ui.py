@@ -178,41 +178,6 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 fill_height=True,
             )
 
-            # Download section — updates after handbook generation
-            with gr.Row():
-                download_btn = gr.DownloadButton(
-                    label="Download Handbook",
-                    visible=False,
-                    variant="primary",
-                    elem_id="download-btn",
-                )
-
-            # Poll for new handbook after each chat message
-            def _check_download():
-                from app import handlers
-                path = handlers._last_handbook_path
-                topic = handlers._last_handbook_topic
-                session_start = handlers._session_start_time
-                if not path or not topic or not os.path.exists(path):
-                    return gr.update(visible=False)
-                # Only show if file was created AFTER this session started
-                file_mtime = os.path.getmtime(path)
-                if file_mtime < session_start:
-                    return gr.update(visible=False)
-                size = os.path.getsize(path)
-                if size > 0:
-                    return gr.DownloadButton(
-                        label=f"Download Handbook ({size // 1024}KB)",
-                        value=path,
-                        visible=True,
-                    )
-                return gr.update(visible=False)
-
-            # Check after each chatbot update
-            chatbot.change(
-                fn=_check_download,
-                outputs=[download_btn],
-            )
 
 
         # ════════════════════════════════════════════
@@ -238,7 +203,7 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
         # Index and switch to chat page
         async def process_and_switch(files):
             if not files:
-                yield gr.update(), "", gr.update(), gr.update(), gr.update(), gr.update(), gr.update()
+                yield gr.update(), "", gr.update(), gr.update(), gr.update(), gr.update()
                 return
             async for status_text, frac in handle_upload(files, rag_engine):
                 is_done = frac >= 1.0
@@ -249,7 +214,6 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                     gr.update(visible=True) if is_done else gr.update(),   # chat_page
                     gr.update(visible=False) if is_done else gr.update(),  # cancel
                     [] if is_done else gr.update(),  # clear chatbot
-                    gr.update(visible=False) if is_done else gr.update(),  # hide download btn
                 )
 
         def on_index_start():
@@ -261,7 +225,7 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
         ).then(
             fn=process_and_switch,
             inputs=[file_upload],
-            outputs=[progress_bar, upload_status, upload_page, chat_page, cancel_btn, chatbot, download_btn],
+            outputs=[progress_bar, upload_status, upload_page, chat_page, cancel_btn, chatbot],
         )
 
         cancel_btn.click(fn=None, cancels=[index_event]).then(
