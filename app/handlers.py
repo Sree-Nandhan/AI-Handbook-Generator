@@ -251,9 +251,8 @@ async def _generate_handbook(
 
         yield (
             f"**Handbook complete!** {wc:,} words generated.\n\n"
-            f"**Saved to:** `{pdf_path}`\n\n"
             f"---\n\n{final[:2000]}...\n\n---\n\n"
-            f"*Full {wc:,}-word handbook saved. Check the outputs folder.*"
+            f"*Full {wc:,}-word handbook available via the download button below.*"
         ), gr.update()
 
     except Exception as e:

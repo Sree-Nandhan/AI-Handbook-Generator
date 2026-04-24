@@ -4,6 +4,7 @@ Gradio UI — Two-phase layout:
   Phase 2: Chat page with sidebar (after indexing)
 """
 
+import os
 import gradio as gr
 from app.rag_engine import RAGEngine
 from app.handbook_generator import HandbookGenerator
@@ -38,7 +39,8 @@ THEME = gr.themes.Soft(
 )
 
 CSS = """
-.gradio-container { max-width: 100% !important; }
+.gradio-container { max-width: 100% !important; overflow: hidden !important; }
+body { overflow: hidden !important; }
 
 /* Hide Gradio's default progress bars (we use our own) */
 .progress-bar, .wrap.default, .generating {
@@ -174,6 +176,35 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 save_history=True,
                 title=None,
                 fill_height=True,
+            )
+
+            # Download section — updates after handbook generation
+            with gr.Row():
+                download_btn = gr.DownloadButton(
+                    label="Download Handbook",
+                    visible=False,
+                    variant="primary",
+                    elem_id="download-btn",
+                )
+
+            # Poll for new handbook after each chat message
+            def _check_download():
+                from app.handlers import _last_handbook_path
+                if _last_handbook_path and os.path.exists(_last_handbook_path):
+                    import os as _os
+                    size = _os.path.getsize(_last_handbook_path)
+                    if size > 0:
+                        return gr.DownloadButton(
+                            label=f"Download Handbook ({size // 1024}KB)",
+                            value=_last_handbook_path,
+                            visible=True,
+                        )
+                return gr.update()
+
+            # Check after each chatbot update
+            chatbot.change(
+                fn=_check_download,
+                outputs=[download_btn],
             )
 
 

@@ -368,11 +368,8 @@ class HandbookGenerator:
         references: str = "", source_title: str = "",
     ) -> str:
         """Assemble all sections into a final handbook with TOC and references."""
-        # Use source paper name as title, fall back to extracted topic
-        if source_title:
-            title = source_title
-        else:
-            title = self._extract_title(instruction)
+        # Always use the topic as the title — not the source paper name
+        title = self._extract_title(instruction)
 
         # Build clean TOC with dotted leaders
         toc = ["## Table of Contents\n"]
