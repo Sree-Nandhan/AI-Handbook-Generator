@@ -178,11 +178,12 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 fill_height=True,
             )
 
-            # Download file — hidden, appears after handbook generation
-            download_file = gr.File(
-                label="Download Handbook",
+            # Download button — hidden, appears after handbook generation
+            download_btn = gr.DownloadButton(
+                label="Download Handbook PDF",
                 visible=False,
-                elem_id="download-file",
+                variant="primary",
+                elem_id="download-btn",
             )
 
             # Timer polls every 2s to check if a handbook was generated
@@ -193,12 +194,18 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 path = handlers._last_handbook_path
                 start = handlers._session_start_time
                 if not path or not start or not os.path.exists(path):
-                    return gr.update(visible=False)
+                    return gr.DownloadButton(label="Download Handbook PDF", visible=False)
                 if os.path.getmtime(path) < start:
-                    return gr.update(visible=False)
-                return gr.update(value=path, visible=True)
+                    return gr.DownloadButton(label="Download Handbook PDF", visible=False)
+                size_kb = os.path.getsize(path) // 1024
+                return gr.DownloadButton(
+                    label=f"Download Handbook PDF ({size_kb}KB)",
+                    value=path,
+                    visible=True,
+                    variant="primary",
+                )
 
-            timer.tick(fn=_check_handbook, outputs=[download_file])
+            timer.tick(fn=_check_handbook, outputs=[download_btn])
 
 
 
