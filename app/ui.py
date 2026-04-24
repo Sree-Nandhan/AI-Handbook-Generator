@@ -185,20 +185,20 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 elem_id="download-file",
             )
 
-            # Check for new handbook whenever chatbot updates
+            # Timer polls every 2s to check if a handbook was generated
+            timer = gr.Timer(value=2, active=True)
+
             def _check_handbook():
                 from app import handlers
                 path = handlers._last_handbook_path
                 start = handlers._session_start_time
-                if not path or not start:
-                    return gr.update(visible=False)
-                if not os.path.exists(path):
+                if not path or not start or not os.path.exists(path):
                     return gr.update(visible=False)
                 if os.path.getmtime(path) < start:
                     return gr.update(visible=False)
                 return gr.update(value=path, visible=True)
 
-            chatbot.change(fn=_check_handbook, outputs=[download_file])
+            timer.tick(fn=_check_handbook, outputs=[download_file])
 
 
 
