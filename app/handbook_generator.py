@@ -8,6 +8,7 @@ are written concurrently, with batch summaries maintaining coherence.
 
 import re
 import os
+import json
 import asyncio
 import logging
 import time
@@ -218,7 +219,15 @@ class HandbookGenerator:
             target_word_count=section.word_count,
         )
 
-        return await self._call_llm(prompt, max_tokens=4096)
+        tokens = 4096
+        result = await self._call_llm(prompt, max_tokens=tokens)
+        # Re-generate if section is too short
+        wc = len(result.split())
+        if wc < section.word_count * 0.6:
+            logger.warning(f"Section {section.number} too short ({wc} words, target {section.word_count}), regenerating...")
+            prompt += f"\n\nCRITICAL: Your previous attempt was only {wc} words. You MUST write at least {section.word_count} words. Expand with more detail, examples, and analysis."
+            result = await self._call_llm(prompt, max_tokens=4096)
+        return result
 
     async def write_batch(
         self,
@@ -401,9 +410,10 @@ class HandbookGenerator:
         )
 
     def save(self, handbook_md: str, topic: str = "handbook") -> tuple[str, str]:
-        """Save handbook as Markdown and PDF. Returns (pdf_path, md_path)."""
-        os.makedirs(OUTPUT_DIR, exist_ok=True)
+        """Save handbook as Markdown, PDF, and metadata.json in an organized folder.
 
+        Returns (pdf_path, md_path).
+        """
         # Extract a clean short name from the topic
         filler = ["create", "a", "the", "on", "about", "for", "of", "handbook", "generate", "write", "make"]
         words = topic.lower().split()
@@ -411,22 +421,62 @@ class HandbookGenerator:
         name = "_".join(core[:4]) if core else "handbook"
         name = name.title().replace("_", "-")
         ts = time.strftime("%Y%m%d_%H%M%S")
-        base = f"Handbook_{name}_{ts}"
+        folder_name = f"{name}_{ts}"
 
-        md_path = os.path.join(OUTPUT_DIR, f"{base}.md")
+        folder = os.path.join(OUTPUT_DIR, "handbooks", folder_name)
+        os.makedirs(folder, exist_ok=True)
+
+        # Save Markdown
+        md_path = os.path.join(folder, "handbook.md")
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(handbook_md)
         logger.info(f"Markdown saved: {md_path}")
 
-        pdf_path = os.path.join(OUTPUT_DIR, f"{base}.pdf")
+        # Save PDF
+        pdf_path = os.path.join(folder, "handbook.pdf")
         try:
             _markdown_to_pdf(handbook_md, pdf_path)
-            logger.info(f"PDF saved: {pdf_path}")
+            if os.path.exists(pdf_path) and os.path.getsize(pdf_path) > 0:
+                logger.info(f"PDF saved: {pdf_path} ({os.path.getsize(pdf_path):,} bytes)")
+            else:
+                logger.error(f"PDF generation produced empty or missing file: {pdf_path}")
+                pdf_path = md_path  # fall back to md
         except Exception as e:
-            logger.error(f"PDF generation failed: {e}")
-            return md_path, md_path
+            logger.error(f"PDF generation failed: {e}", exc_info=True)
+            pdf_path = md_path  # fall back to md
 
-        return pdf_path, md_path
+        # Save metadata
+        metadata = {
+            "topic": topic,
+            "word_count": len(handbook_md.split()),
+            "chapters": len([l for l in handbook_md.split('\n') if l.startswith('## Chapter')]),
+            "timestamp": ts,
+            "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        meta_path = os.path.join(folder, "metadata.json")
+        with open(meta_path, "w") as f:
+            json.dump(metadata, f, indent=2)
+        logger.info(f"Metadata saved: {meta_path}")
+
+        return (pdf_path, md_path)
+
+    @staticmethod
+    def list_handbooks() -> list[dict]:
+        """List all previously generated handbooks with metadata."""
+        handbooks = []
+        base = os.path.join(OUTPUT_DIR, "handbooks")
+        if not os.path.exists(base):
+            return handbooks
+        for folder in sorted(os.listdir(base), reverse=True):
+            meta_path = os.path.join(base, folder, "metadata.json")
+            if os.path.exists(meta_path):
+                with open(meta_path) as f:
+                    meta = json.load(f)
+                meta["folder"] = folder
+                pdf_path = os.path.join(base, folder, "handbook.pdf")
+                meta["pdf_path"] = pdf_path if os.path.exists(pdf_path) else None
+                handbooks.append(meta)
+        return handbooks
 
 
 # ---------------------------------------------------------------------------
@@ -467,7 +517,7 @@ def _markdown_to_pdf(md_text: str, pdf_path: str) -> None:
             if self._page_started and self.page_no() > 1:
                 self.set_font("Times", "I", 9)
                 self.set_text_color(*GRAY)
-                self.cell(0, 8, self._handbook_title, align="R")
+                self.cell(0, 8, _sanitize(self._handbook_title), align="R")
                 self.ln(4)
                 self.set_draw_color(180, 180, 180)
                 self.set_line_width(0.3)

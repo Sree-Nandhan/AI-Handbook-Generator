@@ -21,6 +21,12 @@ HANDBOOK_KEYWORDS = [
     "make a handbook",
 ]
 
+REGENERATE_KEYWORDS = ["same handbook", "regenerate", "same topic", "regenerate handbook"]
+
+HISTORY_KEYWORDS = ["show handbooks", "list handbooks", "previous handbooks", "my handbooks"]
+
+_last_handbook_topic = ""
+
 
 # ---------------------------------------------------------------------------
 # Phase 1: Upload & index PDFs (with progress)
@@ -45,10 +51,9 @@ async def handle_upload(files: list, rag_engine: RAGEngine):
 
         # ── Extract text (fast) ──
         frac = idx / total
-        yield f"**{file_num} Extracting text** from `{fname}`...", frac
+        yield f"**{file_num} Extracting** `{fname}`...", frac
         try:
             path = save_uploaded_file(f)
-            # Extract research paper title from first page
             paper_title = extract_title(path)
             rag_engine.add_source_filename(paper_title if paper_title else fname)
             text = extract_text(path)
@@ -60,23 +65,28 @@ async def handle_upload(files: list, rag_engine: RAGEngine):
             results.append(f"**{fname}** — extraction error: {e}")
             continue
 
-        # ── Extract references before indexing ──
+        # ── Extract references ──
         import pdfplumber
-        frac = (idx + 0.2) / total
-        yield f"**{file_num} Extracting references** from `{fname}`...", frac
         try:
             with pdfplumber.open(path) as pdf:
                 raw = "\n\n".join(p.extract_text() or "" for p in pdf.pages)
+                num_pages = len(pdf.pages)
             refs = extract_references(raw)
             if refs:
                 rag_engine.add_references(fname, refs)
                 logger.info(f"Extracted references from {fname}: {len(refs)} chars")
         except Exception as e:
             logger.warning(f"Reference extraction failed for {fname}: {e}")
+            num_pages = len(text) // 3000  # rough estimate
 
-        # ── Index (slow — show animated status) ──
+        # Estimate indexing time based on text size (~5s per 10K chars)
+        est_seconds = max(10, int(len(text) / 10000 * 5))
+        est_min = est_seconds // 60
+        est_str = f"~{est_min}m {est_seconds % 60}s" if est_min > 0 else f"~{est_seconds}s"
+
+        # ── Index (slow — show estimated time) ──
         frac = (idx + 0.4) / total
-        yield f"**{file_num} Indexing** `{fname}` into knowledge graph — this may take a moment...", frac
+        yield f"**{file_num} Indexing** `{fname}` ({num_pages} pages, {len(text):,} chars) — est. {est_str}", frac
         try:
             await rag_engine.insert(text)
             results.append(f"**{fname}** — {len(text):,} chars indexed")
@@ -106,6 +116,7 @@ async def handle_chat(
     handbook_gen: HandbookGenerator,
 ):
     """Handle chat messages — Q&A or handbook generation."""
+    global _last_handbook_topic
     history = history or []
     user_text = message.strip() if message else ""
 
@@ -116,8 +127,54 @@ async def handle_chat(
     history.append({"role": "user", "content": user_text})
     yield history, gr.update()
 
+    lower_text = user_text.lower()
+
+    # Detect handbook history/listing request
+    is_history = any(kw in lower_text for kw in HISTORY_KEYWORDS)
+    if is_history:
+        handbooks = HandbookGenerator.list_handbooks()
+        if handbooks:
+            lines = ["**Previously generated handbooks:**\n"]
+            for hb in handbooks:
+                lines.append(
+                    f"- **{hb['topic']}** — {hb['word_count']:,} words — {hb['timestamp']}"
+                )
+            content = "\n".join(lines)
+        else:
+            content = "No handbooks have been generated yet."
+        history.append({"role": "assistant", "content": content})
+        yield history, gr.update()
+        return
+
+    # Detect regenerate / same topic request
+    is_regenerate = any(kw in lower_text for kw in REGENERATE_KEYWORDS)
+    if is_regenerate and _last_handbook_topic:
+        topic = _last_handbook_topic
+        if not rag_engine.has_documents:
+            history.append({
+                "role": "assistant",
+                "content": "Please upload PDF documents first.",
+            })
+            yield history, gr.update()
+            return
+        history.append({
+            "role": "assistant",
+            "content": f"Regenerating handbook with the same topic: **{topic}**",
+        })
+        yield history, gr.update()
+        async for h, dl in _generate_handbook(topic, history, rag_engine, handbook_gen):
+            yield h, dl
+        return
+    elif is_regenerate and not _last_handbook_topic:
+        history.append({
+            "role": "assistant",
+            "content": "No previous handbook topic found. Please specify a topic for the handbook.",
+        })
+        yield history, gr.update()
+        return
+
     # Detect handbook request
-    is_handbook = any(kw in user_text.lower() for kw in HANDBOOK_KEYWORDS)
+    is_handbook = any(kw in lower_text for kw in HANDBOOK_KEYWORDS)
 
     if is_handbook and not rag_engine.has_documents:
         history.append({
@@ -128,6 +185,20 @@ async def handle_chat(
         return
 
     if is_handbook:
+        # If user just says "handbook" without a topic, and we have a previous one, ask
+        bare_handbook = lower_text.strip() in ["handbook", "create handbook", "generate handbook", "make handbook"]
+        if bare_handbook and _last_handbook_topic:
+            history.append({
+                "role": "assistant",
+                "content": (
+                    f"I previously generated a handbook on **{_last_handbook_topic}**.\n\n"
+                    f"Would you like to:\n"
+                    f"1. **Specify a new topic** — e.g., 'Create a handbook on Machine Learning'\n"
+                    f"2. **Regenerate the same** — just say 'same' or 'regenerate'\n"
+                ),
+            })
+            yield history, gr.update()
+            return
         async for h, dl in _generate_handbook(user_text, history, rag_engine, handbook_gen):
             yield h, dl
         return
@@ -153,6 +224,7 @@ async def _generate_handbook(
     handbook_gen: HandbookGenerator,
 ):
     """Run parallel AgentWrite/LongWriter pipeline with live progress."""
+    global _last_handbook_topic
     history.append({"role": "assistant", "content": "**Planning** handbook structure..."})
     yield history, gr.update()
 
@@ -192,6 +264,7 @@ async def _generate_handbook(
         # Get result
         final, plan = await gen_task
         pdf_path, md_path = handbook_gen.save(final, topic)
+        _last_handbook_topic = topic
         wc = len(final.split())
         fname = os.path.basename(pdf_path)
 

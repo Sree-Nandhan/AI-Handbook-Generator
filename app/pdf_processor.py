@@ -13,14 +13,47 @@ logger = logging.getLogger("handbook.pdf")
 
 
 def save_uploaded_file(file_path: str) -> str:
-    """Copy an uploaded file to the uploads directory."""
+    """Copy an uploaded file to the uploads directory and log it."""
+    import json, time as _time
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     filename = os.path.basename(file_path)
     dest = os.path.join(UPLOAD_DIR, filename)
     if file_path != dest:
         shutil.copy2(file_path, dest)
     logger.info(f"Saved uploaded file: {filename}")
+
+    # Append to upload log
+    log_path = os.path.join(UPLOAD_DIR, "upload_log.json")
+    log_entries = []
+    if os.path.exists(log_path):
+        try:
+            with open(log_path) as f:
+                log_entries = json.load(f)
+        except Exception:
+            log_entries = []
+    log_entries.append({
+        "filename": filename,
+        "path": dest,
+        "size_bytes": os.path.getsize(dest),
+        "uploaded_at": _time.strftime("%Y-%m-%d %H:%M:%S"),
+    })
+    with open(log_path, "w") as f:
+        json.dump(log_entries, f, indent=2)
+
     return dest
+
+
+def list_uploaded_pdfs() -> list[dict]:
+    """List all previously uploaded PDFs."""
+    import json
+    log_path = os.path.join(UPLOAD_DIR, "upload_log.json")
+    if not os.path.exists(log_path):
+        return []
+    try:
+        with open(log_path) as f:
+            return json.load(f)
+    except Exception:
+        return []
 
 
 def extract_text(pdf_path: str) -> str:

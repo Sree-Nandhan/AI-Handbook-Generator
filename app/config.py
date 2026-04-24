@@ -57,9 +57,9 @@ EMBEDDING_DIM = int(os.getenv("EMBEDDING_DIM", "384"))
 # ---------------------------------------------------------------------------
 # AgentWrite / LongWriter
 # ---------------------------------------------------------------------------
-MIN_WORDS_PER_PARAGRAPH = int(os.getenv("MIN_WORDS_PER_PARAGRAPH", "800"))
-MAX_WORDS_PER_PARAGRAPH = int(os.getenv("MAX_WORDS_PER_PARAGRAPH", "1200"))
-TARGET_HANDBOOK_WORDS = int(os.getenv("TARGET_HANDBOOK_WORDS", "20000"))
+MIN_WORDS_PER_PARAGRAPH = int(os.getenv("MIN_WORDS_PER_PARAGRAPH", "900"))
+MAX_WORDS_PER_PARAGRAPH = int(os.getenv("MAX_WORDS_PER_PARAGRAPH", "1300"))
+TARGET_HANDBOOK_WORDS = int(os.getenv("TARGET_HANDBOOK_WORDS", "23000"))
 
 # ---------------------------------------------------------------------------
 # File paths

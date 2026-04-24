@@ -203,6 +203,35 @@ class RAGEngine:
                     "Try asking about specific topics, methods, or findings from the paper."
                 )
 
+        # If the response seems confused or unhelpful, bypass RAG and answer directly
+        # from document chunks in the database
+        confused_markers = [
+            "do not have enough information",
+            "no specific document",
+            "no single cohesive",
+            "no reference_ids available",
+            "cannot identify",
+            "too fragmented",
+            "i'm sorry",
+            "i apologize",
+            "not contain complete",
+            "no specific pdf",
+            "empty reference_id",
+            "not identifiable",
+            "cannot provide",
+            "no complete pdf",
+            "lack reference",
+        ]
+        lower_result = result.lower()
+        if any(m in lower_result for m in confused_markers):
+            logger.warning("Response seems confused, using direct synthesis from chunks")
+            try:
+                direct = await self._direct_answer(question)
+                if direct and len(direct.strip()) > 50:
+                    result = direct
+            except Exception:
+                pass
+
         logger.info(f"Query result: {len(result)} chars")
         return result
 
@@ -249,12 +278,20 @@ class RAGEngine:
         # Direct Grok call with the context
         answer = await grok_complete(
             prompt=(
-                f"Based on the following document excerpts, answer this question:\n\n"
-                f"Question: {question}\n\n"
-                f"Document excerpts:\n{context[:6000]}\n\n"
-                f"Provide a detailed, accurate answer based on the documents."
+                f"A user uploaded research papers and asked: \"{question}\"\n\n"
+                f"Here are the most relevant excerpts from their uploaded papers:\n\n"
+                f"{context[:8000]}\n\n"
+                f"Provide a detailed, comprehensive answer. Synthesize information across "
+                f"all excerpts. If the question is broad (like 'summarize'), provide a "
+                f"thorough overview of the key topics, findings, and methodologies covered "
+                f"in the papers. Always give a substantive answer."
             ),
-            system_prompt="You are a helpful research assistant. Answer based on the provided documents.",
+            system_prompt=(
+                "You are a research assistant helping users understand their uploaded papers. "
+                "Always provide helpful, detailed answers. The excerpts may come from multiple "
+                "papers — synthesize them into one coherent response. Never say you can't answer "
+                "or that information is insufficient. Use whatever context is available."
+            ),
         )
         return answer
 
