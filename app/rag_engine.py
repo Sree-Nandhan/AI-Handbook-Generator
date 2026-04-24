@@ -119,14 +119,18 @@ class RAGEngine:
         self._source_filenames: list[str] = []  # uploaded PDF names
 
     async def initialize(self) -> None:
-        """Initialize LightRAG with PostgreSQL storage backends."""
+        """Initialize LightRAG with PostgreSQL storage backends.
+        Clears all previous data on startup to prevent stale/hallucinated responses.
+        """
         if self._initialized:
             return
 
         os.makedirs(LIGHTRAG_WORKING_DIR, exist_ok=True)
 
-        # Verify embedding model consistency — if model changed, wipe stale data
-        await self._check_embedding_consistency()
+        # ALWAYS clear previous session data on startup — prevents hallucinations
+        # from stale knowledge graph entries mixing with new uploads
+        logger.info("Clearing previous session data...")
+        await self._clear_all_data()
 
         logger.info("Initializing LightRAG with PostgreSQL backends...")
 
@@ -149,15 +153,14 @@ class RAGEngine:
 
         await self._rag.initialize_storages()
         self._initialized = True
+        self._has_documents = False
 
-        # Check if knowledge graph already has data from previous sessions
-        graph_file = os.path.join(LIGHTRAG_WORKING_DIR, "graph_chunk_entity_relation.graphml")
-        if os.path.exists(graph_file) and os.path.getsize(graph_file) > 1000:
-            self._has_documents = True
-            size_kb = os.path.getsize(graph_file) // 1024
-            logger.info(f"LightRAG initialized — found existing KG ({size_kb} KB)")
-        else:
-            logger.info("LightRAG initialized — empty knowledge graph")
+        # Save embedding model name for consistency checks
+        model_file = os.path.join(LIGHTRAG_WORKING_DIR, ".embedding_model")
+        with open(model_file, "w") as f:
+            f.write(EMBEDDING_MODEL_NAME)
+
+        logger.info("LightRAG initialized — clean slate, ready for uploads")
 
     async def insert(self, text: str) -> None:
         """Insert document text into the knowledge graph."""
