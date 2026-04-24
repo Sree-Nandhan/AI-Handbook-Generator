@@ -156,7 +156,18 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
         # ════════════════════════════════════════════
         with gr.Column(visible=False) as chat_page:
 
-            # Chat interface
+            with gr.Sidebar(label="PaperLens", open=True):
+                gr.Markdown("### Actions")
+                download_btn = gr.DownloadButton(
+                    label="Download Handbook PDF",
+                    visible=False,
+                    variant="primary",
+                    elem_id="download-btn",
+                )
+                refresh_btn = gr.Button("New Session (Upload New PDFs)", variant="secondary")
+                gr.Markdown("---")
+                gr.Markdown("<small>Grok 4.1 · LightRAG · Supabase</small>")
+
             chatbot = gr.Chatbot(
                 placeholder=(
                     "<h2 style='font-weight:700;color:#4f46e5;'>Ready to chat!</h2>"
@@ -178,22 +189,12 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 fill_height=True,
             )
 
-            # Download button — hidden by default, timer-activated
-            download_btn = gr.DownloadButton(
-                label="Download Handbook PDF",
-                visible=False,
-                variant="primary",
-                elem_id="download-btn",
-            )
-
-            # Timer to check for handbook
+            # Timer checks for handbook completion every 2s
             timer = gr.Timer(value=2, active=True)
 
             def _check_handbook(chat_history):
-                # Only show download if "Handbook complete" is in the chat
                 if not chat_history:
                     return gr.DownloadButton(visible=False)
-                # Check last few messages for handbook completion
                 for msg in reversed(chat_history[-5:]):
                     content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
                     if "handbook complete" in content.lower():
@@ -210,6 +211,22 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 return gr.DownloadButton(visible=False)
 
             timer.tick(fn=_check_handbook, inputs=[chatbot], outputs=[download_btn])
+
+            # New Session button — clears everything, goes back to upload
+            def _new_session():
+                from app.handlers import reset_session
+                reset_session()
+                return (
+                    gr.update(visible=True),   # upload_page
+                    gr.update(visible=False),  # chat_page
+                    [],                        # chatbot
+                    gr.DownloadButton(visible=False),  # download
+                )
+
+            refresh_btn.click(
+                fn=_new_session,
+                outputs=[upload_page, chat_page, chatbot, download_btn],
+            )
 
 
 
