@@ -178,7 +178,7 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 fill_height=True,
             )
 
-            # Download button — hidden, appears after handbook generation
+            # Download button — hidden by default, timer-activated
             download_btn = gr.DownloadButton(
                 label="Download Handbook PDF",
                 visible=False,
@@ -186,26 +186,30 @@ def build(rag_engine: RAGEngine, handbook_gen: HandbookGenerator) -> gr.Blocks:
                 elem_id="download-btn",
             )
 
-            # Timer polls every 2s to check if a handbook was generated
+            # Timer to check for handbook
             timer = gr.Timer(value=2, active=True)
 
-            def _check_handbook():
-                from app import handlers
-                path = handlers._last_handbook_path
-                start = handlers._session_start_time
-                if not path or not start or not os.path.exists(path):
-                    return gr.DownloadButton(label="Download Handbook PDF", visible=False)
-                if os.path.getmtime(path) < start:
-                    return gr.DownloadButton(label="Download Handbook PDF", visible=False)
-                size_kb = os.path.getsize(path) // 1024
-                return gr.DownloadButton(
-                    label=f"Download Handbook PDF ({size_kb}KB)",
-                    value=path,
-                    visible=True,
-                    variant="primary",
-                )
+            def _check_handbook(chat_history):
+                # Only show download if "Handbook complete" is in the chat
+                if not chat_history:
+                    return gr.DownloadButton(visible=False)
+                # Check last few messages for handbook completion
+                for msg in reversed(chat_history[-5:]):
+                    content = msg.get("content", "") if isinstance(msg, dict) else str(msg)
+                    if "handbook complete" in content.lower():
+                        from app import handlers
+                        path = handlers._last_handbook_path
+                        if path and os.path.exists(path):
+                            size_kb = os.path.getsize(path) // 1024
+                            return gr.DownloadButton(
+                                label=f"Download Handbook PDF ({size_kb}KB)",
+                                value=path,
+                                visible=True,
+                                variant="primary",
+                            )
+                return gr.DownloadButton(visible=False)
 
-            timer.tick(fn=_check_handbook, outputs=[download_btn])
+            timer.tick(fn=_check_handbook, inputs=[chatbot], outputs=[download_btn])
 
 
 
