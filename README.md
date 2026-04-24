@@ -1,131 +1,126 @@
-# AI Handbook Generator
+# PaperLens — AI Handbook Generator
 
-An AI-powered chat application that lets you upload PDF documents, ask contextual questions, and generate structured 20,000+ word handbooks through conversation.
+An AI-powered chat application that lets you upload PDF research papers, ask contextual questions, and generate structured 20,000+ word handbooks through conversation.
 
-## Features
+## Quick Start
 
-- **PDF Upload & Processing**: Upload multiple PDF documents for analysis
-- **Knowledge Graph RAG**: Uses LightRAG to build a knowledge graph from your documents
-- **Contextual Chat**: Ask questions and get accurate answers grounded in your documents
-- **20,000+ Word Handbook Generation**: Generate comprehensive handbooks using the AgentWrite/LongWriter pipeline
-- **Export**: Download generated handbooks as Markdown and PDF files
+```bash
+# Clone
+git clone https://github.com/Sree-Nandhan/AI-Handbook-Generator.git
+cd AI-Handbook-Generator
 
-## Tech Stack
+# Setup
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 
-| Component | Technology | Purpose |
-|-----------|-----------|---------|
-| Frontend | Gradio | Simple chat interface |
-| LLM | Grok 4.1 (xAI API) | Long-context generation with LongWriter |
-| RAG System | LightRAG | Knowledge graph creation from PDFs |
-| Database | Supabase (PostgreSQL + pgvector) | Vector storage for embeddings |
-| PDF Processing | pdfplumber | Extract text from uploads |
-| Embeddings | BAAI/bge-m3 (local) | Document embedding for retrieval |
+# Configure
+cp .env.example .env
+# Edit .env with your xAI API key and Supabase credentials
 
-## Setup
+# Run
+python main.py
+# Open http://localhost:7860
+```
 
-### 1. Prerequisites
+## Prerequisites
 
 - Python 3.10+
-- A [Supabase](https://supabase.com) account (free tier)
-- An [xAI](https://console.x.ai/) API key
+- [Supabase](https://supabase.com) account (free tier works)
+- [xAI](https://console.x.ai/) API key for Grok 4.1
 
-### 2. Supabase Setup
+### Supabase Setup
 
 1. Create a new project at [supabase.com](https://supabase.com)
 2. Go to **SQL Editor** and run:
    ```sql
    CREATE EXTENSION IF NOT EXISTS vector;
    ```
-3. Note your **Project URL**, **anon key**, and **database password**
+3. Go to **Settings → Database** and note your:
+   - Host (e.g., `db.xxxxx.supabase.co`)
+   - Password
+   - Port (`5432`)
 
-### 3. Install & Configure
+### Environment Variables
 
-```bash
-# Clone the repository
-git clone <your-repo-url>
-cd LunarTech_Handbook_Generator
+Copy `.env.example` to `.env` and fill in:
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your xAI API key and Supabase credentials
+```env
+XAI_API_KEY=your-xai-api-key
+POSTGRES_HOST=db.xxxxx.supabase.co
+POSTGRES_PASSWORD=your-supabase-db-password
 ```
 
-### 4. Run
+## Features
 
-```bash
-python main.py
-```
+| Feature | Description |
+|---------|-------------|
+| **PDF Upload** | Upload multiple research papers (drag & drop) |
+| **Knowledge Graph** | LightRAG builds a knowledge graph from PDFs |
+| **Q&A Chat** | Ask questions, get citation-rich answers |
+| **Handbook Generation** | Generate 20,000+ word handbooks via chat |
+| **PDF Export** | Download handbooks as professionally formatted PDFs |
+| **Progress Indicators** | Live progress for indexing and generation |
+| **Session Management** | Clean DB on every startup, no stale data |
 
-Open your browser to `http://localhost:7860`
+## Tech Stack
+
+| Component | Technology | Purpose |
+|-----------|-----------|---------|
+| Frontend | Gradio 6 (ChatInterface + Sidebar) | Chat UI with history |
+| LLM | Grok 4.1 (xAI API) | Generation + entity extraction |
+| RAG | LightRAG | Knowledge graph from PDFs |
+| Database | Supabase (PostgreSQL + pgvector) | Vector storage |
+| Embeddings | all-MiniLM-L6-v2 (local) | Document embeddings |
+| PDF Processing | pdfplumber + fpdf2 | Extract text, export PDFs |
 
 ## Usage
 
-All interaction happens through a single chat interface:
+1. **Upload PDFs** — Drop research papers on the upload page
+2. **Click "Index Documents"** — Wait for progress bar to complete
+3. **Ask questions** — e.g., "What methodology does the paper use?"
+4. **Generate handbook** — e.g., "Create a handbook on Machine Learning"
+5. **Download** — Click the download button that appears after generation
 
-1. **Upload PDFs**: Attach PDF files using the file upload button and click Send
-2. **Ask Questions**: Type questions about your documents to get contextual answers
-3. **Generate Handbook**: Type "Create a handbook on [topic]" to generate a 20,000+ word handbook
-4. **Download**: Use the download button to get the generated handbook as PDF
+### Special Commands
 
-## How It Works
+- `Create a handbook on [topic]` — Generate a 20K+ word handbook
+- `show handbooks` — List previously generated handbooks
+- `same` / `regenerate` — Regenerate with the last topic
 
-### AgentWrite / LongWriter Pipeline
-
-The handbook generation uses a two-phase approach inspired by the LongWriter research:
-
-1. **Planning Phase**: Grok 4.1 breaks the topic into 30-40 section-level subtasks, each with a main point and target word count
-2. **Writing Phase**: Each section is generated iteratively, with:
-   - The full plan for structural awareness
-   - Previously written text for coherence
-   - LightRAG knowledge graph context for accuracy
-3. **Compilation**: All sections are assembled into a structured Markdown document with a table of contents, then exported as both MD and PDF
-
-### Architecture
+## Architecture
 
 ```
 PDF Upload → pdfplumber (text extraction)
-    → LightRAG (knowledge graph + Supabase/pgvector)
-        → Chat Q&A (hybrid retrieval via Grok 4.1)
-        → Handbook Generation (AgentWrite + RAG context)
-            → Markdown + PDF Export
+  → LightRAG (knowledge graph + Supabase/pgvector)
+    → Chat Q&A (vector search + Grok 4.1 Research Master)
+    → Handbook Generation (AgentWrite/LongWriter pipeline)
+      → PDF Export (fpdf2 with tables, chapters, references)
 ```
+
+### AgentWrite/LongWriter Pipeline
+
+1. **Plan** — Grok creates a 22-chapter writing plan
+2. **Context Fetch** — RAG context retrieved for each chapter in parallel
+3. **Parallel Write** — Chapters written in batches of 12 concurrently
+4. **Compile** — Assembled with TOC, chapter headings, references
+5. **Export** — Saved as Markdown + professionally formatted PDF
 
 ## Project Structure
 
 ```
-LunarTech_Handbook_Generator/
+AI-Handbook-Generator/
 ├── main.py                     # Entry point
 ├── app/
-│   ├── __init__.py             # Package init
-│   ├── config.py               # Configuration + validation
-│   ├── ui.py                   # Gradio layout, theme, wiring
+│   ├── config.py               # Environment configuration
+│   ├── ui.py                   # Gradio ChatInterface + Sidebar
 │   ├── handlers.py             # Chat event handlers
-│   ├── rag_engine.py           # LightRAG + Grok 4.1 + PostgreSQL
+│   ├── rag_engine.py           # LightRAG + Grok integration
 │   ├── handbook_generator.py   # AgentWrite/LongWriter pipeline
-│   ├── pdf_processor.py        # PDF text extraction + cleaning
-│   └── db.py                   # PostgreSQL env validation
-├── requirements.txt            # Python dependencies
-├── .env.example                # Environment variable template
-└── README.md                   # This file
+│   ├── pdf_processor.py        # PDF extraction + title detection
+│   └── db.py                   # PostgreSQL validation
+├── requirements.txt
+├── .env.example
+├── WRITEUP.md
+└── README.md
 ```
-
-## Approach & Challenges
-
-### Approach
-- Used **LightRAG** for knowledge graph-based RAG, providing better contextual understanding of document relationships than simple vector similarity
-- Implemented the **AgentWrite** iterative generation pattern to achieve 20,000+ word output within LLM context limits
-- Chose **Grok 4.1** for its large 256K context window and cost-effective pricing ($0.20/1M input tokens)
-- Used **Supabase PostgreSQL with pgvector** as the persistent vector storage backend
-- Local **BAAI/bge-m3** embeddings for zero-cost, high-quality document retrieval
-
-### Challenges
-- **Knowledge graph construction**: LightRAG requires careful configuration of PostgreSQL backends; ensuring proper pgvector extension setup on Supabase
-- **Context management**: As the handbook grows, passing all prior text becomes impractical; implemented sliding window with summary of earlier sections
-- **Plan consistency**: LLM plan output varies in format; used robust regex parsing with multiple fallback patterns
