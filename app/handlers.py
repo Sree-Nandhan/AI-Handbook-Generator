@@ -1,10 +1,12 @@
 """
 Chat event handlers — upload, Q&A, and handbook generation.
+Designed for gr.ChatInterface (yields response strings, not history lists).
 """
 
 import os
 import asyncio
 import logging
+import random
 import gradio as gr
 from app.rag_engine import RAGEngine
 from app.pdf_processor import extract_text, extract_title, extract_references, save_uploaded_file
@@ -13,30 +15,34 @@ from app.handbook_generator import HandbookGenerator
 logger = logging.getLogger("handbook.handlers")
 
 HANDBOOK_KEYWORDS = [
-    "handbook",
-    "create a handbook",
-    "write a handbook",
-    "generate a handbook",
-    "generate handbook",
-    "make a handbook",
+    "handbook", "create a handbook", "write a handbook",
+    "generate a handbook", "generate handbook", "make a handbook",
 ]
-
 REGENERATE_KEYWORDS = ["same handbook", "regenerate", "same topic", "regenerate handbook"]
-
 HISTORY_KEYWORDS = ["show handbooks", "list handbooks", "previous handbooks", "my handbooks"]
 
+LOADING_MSGS = [
+    "Diving into the research papers...",
+    "Analyzing the knowledge graph...",
+    "Cross-referencing findings...",
+    "Consulting the research corpus...",
+    "Mining insights from your papers...",
+    "Connecting the dots across documents...",
+    "Synthesizing information...",
+    "Searching through the literature...",
+]
+
 _last_handbook_topic = ""
+_last_handbook_path = ""
 
 
 # ---------------------------------------------------------------------------
-# Phase 1: Upload & index PDFs (with progress)
+# Phase 1: Upload & index PDFs
 # ---------------------------------------------------------------------------
 
 async def handle_upload(files: list, rag_engine: RAGEngine):
     """Process uploaded PDFs and index into LightRAG knowledge graph.
-
-    This is an async generator that yields (status_markdown, progress_fraction)
-    tuples so the UI can show live progress.
+    Yields (status_markdown, progress_fraction) tuples.
     """
     if not files:
         yield "Please select PDF files to upload.", 0
@@ -49,7 +55,6 @@ async def handle_upload(files: list, rag_engine: RAGEngine):
         fname = os.path.basename(f)
         file_num = f"[{idx + 1}/{total}]"
 
-        # ── Extract text (fast) ──
         frac = idx / total
         yield f"**{file_num} Extracting** `{fname}`...", frac
         try:
@@ -65,7 +70,6 @@ async def handle_upload(files: list, rag_engine: RAGEngine):
             results.append(f"**{fname}** — extraction error: {e}")
             continue
 
-        # ── Extract references ──
         import pdfplumber
         try:
             with pdfplumber.open(path) as pdf:
@@ -74,19 +78,15 @@ async def handle_upload(files: list, rag_engine: RAGEngine):
             refs = extract_references(raw)
             if refs:
                 rag_engine.add_references(fname, refs)
-                logger.info(f"Extracted references from {fname}: {len(refs)} chars")
         except Exception as e:
             logger.warning(f"Reference extraction failed for {fname}: {e}")
-            num_pages = len(text) // 3000  # rough estimate
+            num_pages = len(text) // 3000
 
-        # Estimate indexing time based on text size (~5s per 10K chars)
         est_seconds = max(10, int(len(text) / 10000 * 5))
-        est_min = est_seconds // 60
-        est_str = f"~{est_min}m {est_seconds % 60}s" if est_min > 0 else f"~{est_seconds}s"
+        est_str = f"~{est_seconds // 60}m {est_seconds % 60}s" if est_seconds >= 60 else f"~{est_seconds}s"
 
-        # ── Index (slow — show estimated time) ──
         frac = (idx + 0.4) / total
-        yield f"**{file_num} Indexing** `{fname}` ({num_pages} pages, {len(text):,} chars) — est. {est_str}", frac
+        yield f"**{file_num} Indexing** `{fname}` ({num_pages} pages) — est. {est_str}", frac
         try:
             await rag_engine.insert(text)
             results.append(f"**{fname}** — {len(text):,} chars indexed")
@@ -96,7 +96,7 @@ async def handle_upload(files: list, rag_engine: RAGEngine):
             continue
 
         frac = (idx + 1) / total
-        yield f"**{file_num} Done** — `{fname}` indexed successfully!", frac
+        yield f"**{file_num} Done** — `{fname}` indexed!", frac
 
     yield (
         "**All documents indexed!**\n\n"
@@ -106,143 +106,91 @@ async def handle_upload(files: list, rag_engine: RAGEngine):
 
 
 # ---------------------------------------------------------------------------
-# Phase 2: Chat — Q&A or handbook generation
+# Phase 2: Chat — for gr.ChatInterface (yields response strings)
 # ---------------------------------------------------------------------------
 
-async def handle_chat(
+async def handle_chat_message(
     message: str,
     history: list,
     rag_engine: RAGEngine,
     handbook_gen: HandbookGenerator,
 ):
-    """Handle chat messages — Q&A or handbook generation."""
-    global _last_handbook_topic
-    history = history or []
+    """Handle a single chat message. Yields response string chunks for streaming.
+    Returns tuple (response, download_update) for additional_outputs.
+    """
+    global _last_handbook_topic, _last_handbook_path
     user_text = message.strip() if message else ""
 
     if not user_text:
-        yield history, gr.update()
+        yield "", gr.update()
         return
-
-    history.append({"role": "user", "content": user_text})
-    yield history, gr.update()
 
     lower_text = user_text.lower()
 
-    # Detect handbook history/listing request
-    is_history = any(kw in lower_text for kw in HISTORY_KEYWORDS)
-    if is_history:
+    # ── Handbook history ──
+    if any(kw in lower_text for kw in HISTORY_KEYWORDS):
         handbooks = HandbookGenerator.list_handbooks()
         if handbooks:
             lines = ["**Previously generated handbooks:**\n"]
             for hb in handbooks:
-                lines.append(
-                    f"- **{hb['topic']}** — {hb['word_count']:,} words — {hb['timestamp']}"
-                )
-            content = "\n".join(lines)
+                lines.append(f"- **{hb['topic']}** — {hb['word_count']:,} words — {hb['timestamp']}")
+            yield "\n".join(lines), gr.update()
         else:
-            content = "No handbooks have been generated yet."
-        history.append({"role": "assistant", "content": content})
-        yield history, gr.update()
+            yield "No handbooks have been generated yet.", gr.update()
         return
 
-    # Detect regenerate / same topic request
-    is_regenerate = any(kw in lower_text for kw in REGENERATE_KEYWORDS)
-    if is_regenerate and _last_handbook_topic:
-        topic = _last_handbook_topic
+    # ── Regenerate ──
+    if any(kw in lower_text for kw in REGENERATE_KEYWORDS):
+        if _last_handbook_topic:
+            async for resp, dl in _generate_handbook(_last_handbook_topic, rag_engine, handbook_gen):
+                yield resp, dl
+        else:
+            yield "No previous handbook topic found. Please specify a topic.", gr.update()
+        return
+
+    # ── Handbook generation ──
+    if any(kw in lower_text for kw in HANDBOOK_KEYWORDS):
         if not rag_engine.has_documents:
-            history.append({
-                "role": "assistant",
-                "content": "Please upload PDF documents first.",
-            })
-            yield history, gr.update()
+            yield "Please upload and index PDF documents first.", gr.update()
             return
-        history.append({
-            "role": "assistant",
-            "content": f"Regenerating handbook with the same topic: **{topic}**",
-        })
-        yield history, gr.update()
-        async for h, dl in _generate_handbook(topic, history, rag_engine, handbook_gen):
-            yield h, dl
-        return
-    elif is_regenerate and not _last_handbook_topic:
-        history.append({
-            "role": "assistant",
-            "content": "No previous handbook topic found. Please specify a topic for the handbook.",
-        })
-        yield history, gr.update()
-        return
-
-    # Detect handbook request
-    is_handbook = any(kw in lower_text for kw in HANDBOOK_KEYWORDS)
-
-    if is_handbook and not rag_engine.has_documents:
-        history.append({
-            "role": "assistant",
-            "content": "Please upload PDF documents first.",
-        })
-        yield history, gr.update()
-        return
-
-    if is_handbook:
-        # If user just says "handbook" without a topic, and we have a previous one, ask
-        bare_handbook = lower_text.strip() in ["handbook", "create handbook", "generate handbook", "make handbook"]
-        if bare_handbook and _last_handbook_topic:
-            history.append({
-                "role": "assistant",
-                "content": (
-                    f"I previously generated a handbook on **{_last_handbook_topic}**.\n\n"
-                    f"Would you like to:\n"
-                    f"1. **Specify a new topic** — e.g., 'Create a handbook on Machine Learning'\n"
-                    f"2. **Regenerate the same** — just say 'same' or 'regenerate'\n"
-                ),
-            })
-            yield history, gr.update()
+        bare = lower_text.strip() in ["handbook", "create handbook", "generate handbook", "make handbook"]
+        if bare and _last_handbook_topic:
+            yield (
+                f"I previously generated a handbook on **{_last_handbook_topic}**.\n\n"
+                f"Would you like to:\n"
+                f"1. **Specify a new topic** — e.g., 'Create a handbook on Machine Learning'\n"
+                f"2. **Regenerate the same** — just say 'same' or 'regenerate'"
+            ), gr.update()
             return
-        async for h, dl in _generate_handbook(user_text, history, rag_engine, handbook_gen):
-            yield h, dl
+        async for resp, dl in _generate_handbook(user_text, rag_engine, handbook_gen):
+            yield resp, dl
         return
 
-    # Regular Q&A
-    import random
-    loading_msgs = [
-        "Diving into the research papers...",
-        "Analyzing the knowledge graph...",
-        "Cross-referencing findings...",
-        "Consulting the research corpus...",
-        "Mining insights from your papers...",
-        "Connecting the dots across documents...",
-        "Synthesizing information...",
-        "Searching through the literature...",
-    ]
-    history.append({"role": "assistant", "content": f"*{random.choice(loading_msgs)}*"})
-    yield history, gr.update()
+    # ── Regular Q&A ──
+    yield f"*{random.choice(LOADING_MSGS)}*", gr.update()
 
     try:
         response = await rag_engine.query(user_text)
-        history[-1]["content"] = response
+        yield response, gr.update()
     except Exception as e:
         logger.error(f"Query failed: {e}")
-        history[-1]["content"] = f"Error: {e}"
-    yield history, gr.update()
+        yield f"Error: {e}", gr.update()
 
 
 # ---------------------------------------------------------------------------
-# Handbook generation — parallel batch pipeline
+# Handbook generation pipeline
 # ---------------------------------------------------------------------------
 
 async def _generate_handbook(
     topic: str,
-    history: list,
     rag_engine: RAGEngine,
     handbook_gen: HandbookGenerator,
 ):
-    """Run parallel AgentWrite/LongWriter pipeline with live progress."""
-    global _last_handbook_topic
-    history.append({"role": "assistant", "content": "**Planning** handbook structure..."})
-    yield history, gr.update()
+    """Run handbook generation. Yields (response_text, download_update) tuples."""
+    global _last_handbook_topic, _last_handbook_path
 
-    # Progress state shared with callback
+    yield "**Planning** handbook structure...", gr.update()
+
     status = {"stage": "planning", "total": 0, "done": 0}
 
     def on_progress(stage, total, done):
@@ -251,12 +199,10 @@ async def _generate_handbook(
         status["done"] = done
 
     try:
-        # Run generation with progress callback
         gen_task = asyncio.create_task(
             handbook_gen.generate_parallel(topic, rag_engine, on_progress)
         )
 
-        # Poll progress while generation runs
         while not gen_task.done():
             stage = status["stage"]
             total = status["total"]
@@ -271,31 +217,22 @@ async def _generate_handbook(
             else:
                 msg = "**Processing...**"
 
-            history[-1]["content"] = msg
-            yield history, gr.update()
-            await asyncio.sleep(0.5)
+            yield msg, gr.update()
+            await asyncio.sleep(0.3)
 
-        # Get result
         final, plan = await gen_task
         pdf_path, md_path = handbook_gen.save(final, topic)
         _last_handbook_topic = topic
+        _last_handbook_path = pdf_path
         wc = len(final.split())
-        fname = os.path.basename(pdf_path)
 
-        history[-1]["content"] = (
+        yield (
             f"**Handbook complete!** {wc:,} words generated.\n\n"
-            f"**{fname}** is ready for download.\n\n"
+            f"**Saved to:** `{pdf_path}`\n\n"
             f"---\n\n{final[:2000]}...\n\n---\n\n"
-            f"*Showing first 2,000 chars. Full {wc:,}-word handbook available via download button below.*"
-        )
-        logger.info(f"Handbook complete: {wc:,} words -> {pdf_path}")
-        yield history, gr.DownloadButton(
-            label=f"Download Handbook ({wc:,} words)",
-            value=pdf_path,
-            visible=True,
-        )
+            f"*Full {wc:,}-word handbook saved. Check the outputs folder.*"
+        ), gr.update()
 
     except Exception as e:
         logger.error(f"Handbook failed: {e}")
-        history[-1]["content"] = f"**Error:** {e}"
-        yield history, gr.update()
+        yield f"**Error:** {e}", gr.update()
