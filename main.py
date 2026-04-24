@@ -1,5 +1,5 @@
 """
-Entry point — starts the AI Handbook Generator.
+Entry point — starts PaperLens.
 """
 
 import os
@@ -24,7 +24,7 @@ async def startup():
 
 def main():
     os.makedirs(OUTPUT_DIR, exist_ok=True)
-    logger.info("Starting AI Handbook Generator...")
+    logger.info("Starting PaperLens...")
 
     engine, generator = asyncio.run(startup())
 
